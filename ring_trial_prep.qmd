@@ -1,0 +1,93 @@
+---
+title: "Possible steps for ring trial analysis"
+author: "Philippine Louail"
+format: html
+editor: visual
+---
+
+# Experimental design summary:
+
+No replicates (probably), total of 83 mixtures, 1299 metabolite standards.
+
+Each lab will run these twice, one times with a lab specific set up and one
+time with a harmonized method.
+
+Harmonized method:
+
+-   Lhe harmonized method provide specific column, specific data acquisition
+    time.
+-   should be an inclusion list
+-   MassSpec set up will be lab dependent even in the harmonized protocol
+-   Essentially it is an harmonized lc set up
+
+Here is [example of
+metadata](https://docs.google.com/spreadsheets/d/1Pbu6TpgGqK5jL36E_GHRUSubD0DRlmw-/edit?gid=53750153#gid=53750153)
+We will get this from each lab.
+
+Naming codes are as such:
+
+-   Lab: HMGU = A, AUTh = B, ICL = C, CEU = D, Afekta = E.
+-   Harmonized method = 1, laboratory method = 2.
+
+There will be NAPS, we could use them for:
+
+-   rt shift alignemnt
+-   to normalise intensity maybe. Within and accross labs...
+
+The mixtures will be run in in batches :
+
+-   Human endosome
+-   Food exposome
+-   Chemical Exposome & Microbiota Exposome & Eukaryotic Exposme & Plant
+    Exposome
+
+Aims for ions :
+
+-   Positive: \[M+H\]+ and \[M+Na\]+
+-   Negative: \[M-H\]- and\[M+FA-H\]-
+
+Fragmentation can also be studied later on:
+
+-   How ?
+
+The peaks similarity code can later be used for grouping method in the
+`MsFeature` package
+
+# Study Aims:
+
+General aim is to understand the variation that arises due to lc-ms set ups
+difference.
+
+# Possible analysis:
+
+Mains
+
+-   Determine difference within labs harmonized vs. lab specific technique
+    -   this gives us the LC variation
+    -   Could we use the NAPS here to get an estimation of rt shift ?
+-   Determine between harmonized of different labs.
+    -   this gives us difference due to MS
+
+Others:
+
+-   Compare the presence of different adducts between systems
+-   Fragmentation (We should have collision energy information also...)
+
+# Steps:
+
+-   Preprocess all labs one by one
+    -   Same settings for the harmonized method across labs.
+    -   Specific setting for the lab specific method.
+-   Generate results summary for both methods in each
+    -   Number of standard present for each method
+        -   Summarize per exposome, polarity,.. ?
+-   Use these summary for inter and intra lab analysis:
+    -   Intra-lab:
+        -   For the standards present in both methods, compute, peak shape
+            similarities, peakwidth, possibly intensity.
+        -   Check for polarity based difference, mass-based idfference,
+            exposome based difference.
+    -   Inter-lab (only look at harmonized set up)
+        -   Compare number of standard, adducts,..
+        -   If possible (enough overlap) make a list of common adducts and then
+            compute peak shape, intensity,.. similarities.
