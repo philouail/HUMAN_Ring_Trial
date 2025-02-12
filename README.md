@@ -20,4 +20,4 @@ standardized method.
 
 
 Overview notes on the study design and initial analysis ideas can be found
-in this [document](..)
+in this [document](https://github.com/philouail/HUMAN_Ring_Trial/blob/main/ring_trial_prep.qmd)
