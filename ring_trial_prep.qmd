@@ -1,0 +1,153 @@
+---
+title: "Possible steps for ring trial analysis"
+author: "Philippine Louail"
+format: html
+editor: visual
+---
+
+# Experimental design summary:
+
+No replicates (probably), total of 83 mixtures, 1299 metabolite standards.
+
+Each lab will run these twice, one times with a lab specific set up and one
+time with a harmonized method.
+
+Harmonized method:
+
+-   The harmonized method provide specific column, specific data acquisition
+    time.
+-   There should be an inclusion list
+-   MassSpec set up will be lab dependent even in the harmonized protocol
+-   Essentially it is an harmonized lc set up
+
+Here is [example of
+metadata](https://docs.google.com/spreadsheets/d/1Pbu6TpgGqK5jL36E_GHRUSubD0DRlmw-/edit?gid=53750153#gid=53750153)
+We will get this from each lab.
+
+Naming codes are as such:
+
+-   Lab: HMGU = A, AUTh = B, ICL = C, CEU = D, Afekta = E.
+-   Harmonized method = 1, laboratory method = 2.
+
+There will be NAPS, we could use them for:
+
+-   rt shift alignemnt
+-   to normalise intensity maybe. Within and accross labs...
+
+The mixtures will be run in in batches :
+
+-   Human endosome
+-   Food exposome
+-   Chemical Exposome & Microbiota Exposome & Eukaryotic Exposme & Plant
+    Exposome
+
+Aims for ions :
+
+-   Positive: \[M+H\]+ and \[M+Na\]+
+-   Negative: \[M-H\]- and\[M+FA-H\]-
+
+Fragmentation can also be studied later on:
+
+-   How ?
+
+The peaks similarity code can later be used for grouping method in the
+`MsFeature` package
+
+# Study Aims:
+
+General aim is to understand the variation that arises due to lc-ms set ups
+difference.
+
+Specific aims: 
+
+-   Determine difference within labs:  harmonized vs. lab specific LC method.
+    -   This gives us the LC variation
+-   Determine difference inter-labs: between harmonized method across labs.
+    -   This gives us difference due to MS
+
+Others:
+
+-   Compare the presence of different adducts between systems
+-   Fragmentation (We should have collision energy information also...)
+
+# Steps- for *one* run:
+
+## Preprocess
+
+Raw data investigation: 
+
+- Look at the BPC of different NAPS injection throughout the runs, visible RT shift ? 
+- Similarity matrix of TIC of the  NAPS ? 
+- Check rt range ? 
+
+Import standard table: 
+
+- for each run look at the distribution of standard across RT 
+
+Peak-picking: 
+
+-   Same settings for the harmonized method across labs.
+-   Specific setting for the lab specific method.
+-   Should choose around 10-ish standards (distributed along RT), to quickly 
+    evaluate peak-picking, in each mixture. 
+-   extract all the ones that we cannot automaticaly find. see if because
+    no signal/bad signal,.. 
+
+Retention time alignment using NAPS: 
+
+- only do correspondence on NAPS and use these features to adjust. 
+- could quantify the amount of shift in each run. 
+
+No correspondence: because no replicates. 
+
+Quality control: 
+
+- Filtering based on features is not possible. 
+- what can we do without replicate?
+
+Normalisation: 
+
+- Based on NAPS ? 
+https://link.springer.com/article/10.1007/s00216-021-03828-0#:~:text=In%20order%20to%20index%20RTs
+
+Extra plots:
+
+- RLA
+    - NAPS only 
+    - ? 
+
+- For adducts: also plot RT slices through the m/z range ? 
+
+
+## Generate results summary for each run:
+
+Qualitative summaries:
+
+-   Number of standards present.
+    -   Summarize per exposome, polarity, mass range ?
+-   Analysis per standards:
+    -   Number of chromatographic peaks with matching m/z: 
+    -   similarity to public ref. 
+    -   Number of MS2 spectra per chrompeak/standard
+    -   RT peak width (rtmax - rtmin)
+    -   m/z peak width (mzmax - mzmin)
+    -   indexing position: using NAPS
+    -   adducts: look for the ones precised above first. 
+        - can we check for them systematically ? at a certain retention time
+          slice (chromatogram object?)
+- Compute background signal/noise 
+
+Quantitative summaries:
+
+-   Relative abundance of each standard: abundance against average/TIC ?
+    -   Could the NAPS be used for this somehow ?
+    -   Take in account that the same concentration should have been be
+        injected. 
+        -   I have to check that. 
+
+# Putting results of the runs together:
+
+Compute overlap of standard presence intra-lab and inter-lab:
+
+-   Then use computed qualitative and quantitative metrics of these described
+    above to evaluate difference due to LC (intra-lab) and MS (inter-lab)
