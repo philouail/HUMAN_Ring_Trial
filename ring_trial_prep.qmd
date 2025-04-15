@@ -9,8 +9,8 @@ editor: visual
 
 No replicates (probably), total of 83 mixtures, 1299 metabolite standards.
 
-Each lab will run these twice, one times with a lab specific set up and one
-time with a harmonized method.
+Each lab will run these twice, one times with a lab specific set up and one time
+with a harmonized method.
 
 Harmonized method:
 
@@ -110,16 +110,17 @@ Normalisation:
 
 -   Based on NAPS ?
     https://link.springer.com/article/10.1007/s00216-021-03828-0#:\~:text=In%20order%20to%20index%20RTs
--   No normalisation aty first. 
+-   No normalisation aty first.
 
 Extra plots:
 
 -   RLA: NAPS only
 
 -   For adducts and isotopes
+
     -   plot full MS1 scan for each chrompeaks. (That's gonna be fun tedious)
-    -   I really want to find a automatic way to do that, or at least report peak 
-        outside of the chrompeak for example. 
+    -   I really want to find a automatic way to do that, or at least report
+        peak outside of the chrompeak for example.
 
 ## Generate results summary for each run:
 
@@ -138,8 +139,8 @@ Qualitative summaries:
         -   can we check for them systematically ? at a certain retention time
             slice (chromatogram object?)
 -   Compute background signal/noise
--   NAPS analysis 
-    -   Compute the variance and mean difference between NAPS rt. 
+-   NAPS analysis
+    -   Compute the variance and mean difference between NAPS rt.
 
 Quantitative summaries:
 
