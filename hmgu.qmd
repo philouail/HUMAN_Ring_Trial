@@ -1,0 +1,657 @@
+---
+title: "HMGU Reference Method Analysis - POS"
+format: html
+editor: visual
+---
+
+# Set up & raw data investigation
+- Workflow: HMGU Reference Method (Positive Mode)
+
+-   Random notes:
+    -   Need to ask for BLANK and NAPS next times.
+    -   Should I use the blanks ?
+
+## Load Required Packages
+
+```{r, message=FALSE, warning=FALSE}
+library(readxl)
+library(S4Vectors)
+library(Spectra)
+library(MsExperiment)
+library(xcms)
+library(Biobase)
+library(pheatmap)
+library(alabaster.base)
+library(MsIO)
+```
+
+## Load metadata and raw files
+
+```{r, warning=FALSE, message=FALSE}
+# Load compound metadata (sheet 2)
+meta_pos <- read_xlsx("data/hmgu/HMGU_RefMethod_HE.xlsx", sheet = 2L, 
+                      col_names = TRUE, skip = 1) |> data.frame()
+files_name <- unique(meta_pos$filname)
+```
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+## notes: i'm not super happy about the column names. 
+## This double header thing is not great.
+
+# Load pos data
+seq <- read_xlsx("data/hmgu/HE_pos_mzml/seq.xlsx", 
+                 col_names = TRUE) |> data.frame()
+seq$filename <- paste0(seq$Data.File, ".mzML")
+mse_pos <- readMsExperiment(paste0("data/hmgu/HE_pos_mzml/", seq$filename), seq)
+sampleData(mse)
+
+# load neg data
+seq <- read_xlsx("data/hmgu/HE_neg_mzml/seq.xlsx", 
+                 col_names = TRUE) |> data.frame()
+seq$filename <- paste0(seq$Data.File, ".mzML")
+mse_neg <- readMsExperiment(paste0("data/hmgu/HE_neg_mzml/", seq$filename), seq)
+```
+
+```{r}
+#' Set up parallel processing using 2 cores
+if (.Platform$OS.type == "unix") {
+    register(MulticoreParam(2))
+} else {
+    register(SnowParam(2))
+}
+```
+
+
+## Overview and Quality
+
+BPC - samples
+
+```{r, eval=FALSE}
+idx_sample_pos <- sampleData(mse_pos)$sample_type == "sample"
+idx_sample_neg <- sampleData(mse_neg)$sample_type == "sample"
+```
+
+```{r, eval=FALSE}
+chromatogram(mse_pos[idx_sample_pos], msLevel = 1L, chunkSize =2 ) |> 
+  plot(main = "BPC sample positive ionization")
+
+chromatogram(mse_neg[idx_sample_neg], msLevel = 1L, chunkSize = 2) |>
+  plot(main = "BPC sample negative ionization")
+```
+
+BPC NAPS.
+
+```{r, eval=FALSE}
+idx_NAPS_pos <- sampleData(mse_pos)$sample_type == "NAPS"
+chromatogram(mse_pos[idx_NAPS_pos], msLevel =1, chunkSize = 2) |> 
+  plot(main = "BPC NAPS positive ionization")
+
+idx_NAPS_neg <- sampleData(mse_neg)$sample_type == "NAPS"
+chromatogram(mse_neg[idx_NAPS_neg], msLevel =1, chunkSize = 2) |>
+  plot(main = "BPC NAPS negative ionization")
+
+## i would do a separate object with NAPS for each lab. - for comparison
+## it's supposed to have 20 peaks
+```
+
+There does not seem to be a big shift in retention time BUT In intensity yes. 
+
+Check if it is linked to injection index ? 
+
+TIC matrix similarity of NAPS.
+
+```{r, eval=FALSE}
+#' Total ion chromatogram
+tic <- chromatogram(mse_pos[idx_NAPS_pos], 
+                    aggregationFun = "sum", msLevel = 1L, chunkSize = 2) |>
+  bin(binSize = 2)
+#' Calculate similarity (Pearson correlation) between TICs
+ticmap <- do.call(cbind, lapply(tic, intensity)) |>
+  cor()
+rownames(ticmap) <- colnames(ticmap) <- sampleData(mse_pos[idx_NAPS_pos])$Sample.Name
+pheatmap(ticmap,
+         main = "TICs similarity of NAPS sample, positive ionization")
+
+#' Neg mode
+tic <- chromatogram(mse_neg[idx_NAPS_neg], 
+                    aggregationFun = "sum", msLevel = 1L, chunkSize = 2) |>
+  bin(binSize = 2)
+ticmap <- do.call(cbind, lapply(tic, intensity)) |>
+  cor()
+rownames(ticmap) <- colnames(ticmap) <- sampleData(mse_neg[idx_NAPS_neg])$Sample.Name
+pheatmap(ticmap,
+         main = "TICs similarity of NAPS sample, negative ionization")
+```
+
+Not as similar as I would expect. But in the paper they are normalized soo. 
+
+BPC blanks 
+
+```{r, eval=FALSE}
+idx_blank_pos <- sampleData(mse_pos)$sample_type == "blank"
+chromatogram(mse_pos[idx_blank_pos], msLevel = 1L, chunkSize = 2) |> 
+  plot(col = c("blue", "red"), main = "BPC blank positive ionization")
+
+idx_blank_neg <- sampleData(mse_neg)$sample_type == "blank"
+chromatogram(mse_neg[idx_blank_neg], msLevel = 1L, chunkSize = 2) |> 
+  plot(col = c("blue", "red"), main = "BPC blank negative ionization")
+```
+
+RT ranges and spectra number per MS levels
+
+```{r, eval=FALSE}
+#' Range
+range(rtime(mse_pos))
+range(rtime(mse_neg))
+
+#' Count the number of spectra with a specific MS level per file.
+print("Positive mode")
+spectra(mse_pos) |>
+    msLevel() |>
+    split(fromFile(mse_pos)) |>
+    lapply(table) |>
+    do.call(what = cbind)
+
+#' Count the number of spectra with a specific MS level per file.
+print("Negative mode")
+spectra(mse_neg) |>
+    msLevel() |>
+    split(fromFile(mse_neg)) |>
+    lapply(table) |>
+    do.call(what = cbind)
+```
+
+Comments: Nothing alarming. Similar-ish number of spectra. I would not do
+filtering for now. 
+
+- Here decide if want to filter retention time (method dependent), if yes run:
+
+```{r}
+# mse <- filterRt(mse, rt = c(0, 60)) ## change c(0,60) to your settings
+```
+
+# Workflow explanation
+
+```{r}
+#| code-fold: true
+#| code-summary: "Show the code"
+library(DiagrammeR)
+
+grViz("
+digraph sample_analysis {
+  graph [layout = dot, rankdir = TB]
+
+  node [shape = box, style = filled, color = lightgray, fontname = Helvetica]
+
+  LoadSample      [label = '1. One sample/One mixture']
+  EstimateParams  [label = '2. Estimate Peak Picking Params']
+  PeakPicking     [label = '3. Perform Peak Picking on ALL samples']
+  MatchStandards  [label = '4. Match peaks to Standards (Theoretical m/z)']
+  MultiPeak       [label = '5. Deal with multiple chrom peaks for same m/z']
+  rtgroup         [label = '6. Group by RT across adducts']
+  Visualize       [label = '7. Visualize EICs for standards']
+  ExtractMS2      [label = '5. Extract MS2 for ALL chromatographic Peaks']
+  NonMatched      [label = '6. MS2 Annotation using GNPS library']
+  VisMS2          [label = '7. Visualize fragment matching to ref library']
+  VisMS1          [label = '5. Visualize MS1 for standards']
+  isotope         [label = '6. Isotope pattern matching']
+  
+  LoadSample -> EstimateParams -> PeakPicking -> MatchStandards
+  MatchStandards -> MultiPeak
+  rtgroup -> Visualize
+  MultiPeak -> rtgroup
+  MatchStandards -> ExtractMS2
+  ExtractMS2 -> NonMatched -> VisMS2
+  MatchStandards -> VisMS1 -> isotope
+}
+")
+```
+
+
+# Estimate peak-picking parameters on ONE file.
+
+```{r, eval=FALSE}
+sp_meta <- split(meta_pos, meta_pos$filname)
+x_meta <- sp_meta[[1]]
+x_mse <- mse_pos[idx_sample_pos][1]
+```
+
+## Extract theoretical eics
+
+Using theoretical m/z for both main positive adducts and all along the 
+retention time.
+
+```{r, eval=FALSE}
+#| code-fold: true
+#| code-summary: "Show the code"
+theo_mz <- x_meta[,18]
+eicsMH <- chromatogram(x_mse, mz = c(theo_mz - 0.2, theo_mz + 0.2))
+
+fData(eicsMH)$std_name <- x_meta$ChEBI.name
+fData(eicsMH)$std_name[19] <- "alpha-D-glucosyl-(1-4)-alpha-D-mannose" 
+# need to check for names because some have shitty characters
+rownames(eicsMH) <- fData(eicsMH)$std_name
+
+dr <- "res/hmgu/eics_full_rt_slices/MH_ions/"
+dir.create(dr, recursive = TRUE, showWarnings = FALSE)
+for (i in seq_along(eicsMH)) {
+    png(paste0(dr, "EIC_", as.character(fData(eicsMH)$std_name[i]), ".png"),
+        width = 12, height = 8, units = "cm", res = 600, pointsize = 4)
+    plot(eicsMH[i, ], main = paste(fData(eicsMH)$std_name[i], "[M+H]+ ion"))
+    grid()
+    dev.off()
+}
+
+theo_mz <- x_meta[,19]
+eicsNA <- chromatogram(x_mse, mz = c(theo_mz - 0.2, theo_mz + 0.2)) 
+   
+fData(eicsNA)$std_name <- x_meta$ChEBI.name
+fData(eicsNA)$std_name[19] <- "alpha-D-glucosyl-(1-4)-alpha-D-mannose" 
+# need to check for names because some have shitty characters
+rownames(eicsNA) <- fData(eicsNA)$std_name
+
+dr <- "res/hmgu/eics_full_rt_slices/MH_ions/"
+dir.create(dr, recursive = TRUE, showWarnings = FALSE)
+for (i in seq_along(eicsNA)) {
+    png(paste0(dr, "EIC_", as.character(fData(eicsNA)$std_name[i]), ".png"),
+        width = 12, height = 8, units = "cm", res = 600, pointsize = 4)
+    plot(eicsNA[i, ], main = paste(fData(eicsNA)$std_name[i], "[M+H]+ ion"))
+    grid()
+    dev.off()
+}
+```
+
+We have `r length(theo_mz)` number of standard.
+
+Small notes:
+
+-   Extraction of chromatogram takes around 30s per samples.
+-   When we set up the group, each endosome had a different Da minimum between
+    standard in one mixture
+    -   In the human endosome mixture the minimum m/z diff we wet up was 0.7.
+        Which is why i am pretty relax with the param above, i usually set it
+        up around 0.05 in untargeted but this is a different thing and we don't
+        know how deviated from the theoretical m/z the standard will be. so i
+        will start with 0.4
+
+After a quick check they seem pretty noisy, and they all have more than one
+very big peak. 
+
+## Peak picking param set up
+
+Use the previous EICs to set up parameters. This hsould happen only once
+per lab.
+
+First quickly checking a few peaks to look for peak width:
+
+```{r, eval=FALSE}
+plot(eicsMH["sarcosine"], xlim = c(0, 30)) # 6secs
+plot(eicsMH["glutathione"], xlim = c(10, 50)) # 10s 
+plot(eicsMH["L-homoserine"], xlim = c(20, 40)) #7s 
+```
+
+
+Will set up for `c(4, 12 seconds)` peak-width. Noise seems to be fairly low.
+Maybe a cut-off around 200 to prevent bad peaks to be detected, could be
+implemented. The intensity are super low for some standard however.
+
+For ppm deviation:
+
+```{r. eval=FALSE}
+mz <- mz(eicsMH["L-homoserine"]) |> as.vector() 
+cst <- x_mse |>
+  spectra() |>
+    filterMsLevel(msLevel = 1L) |>
+  filterRt(rt = c(25, 27)) |>
+  filterMzRange(mz = c(119.0302, 119.0312))
+
+#' Show the number of peaks per m/z filtered spectra
+lengths(cst)
+```
+
+```{r, eval=FALSE}
+#' Calculate the difference in m/z values between scans
+mz_diff <- cst |>
+    mz() |>
+    unlist() |>
+    diff() |>
+    abs()
+
+#' Express differences in ppm
+range(mz_diff * 1e6 / mean(unlist(mz(cst))))
+```
+
+Set up at 5ppm.
+
+
+# Peak picking on ALL samples
+
+```{r,eval=FALSE}
+param <- CentWaveParam(peakwidth = c(4, 12), ppm = 5, integrate = 2,
+                       snthresh = 7, noise = 500) 
+
+mse_pos <- findChromPeaks(mse_pos[idx_sample_pos], param, 
+                          msLevel = 1L, chunkSize = 2L)
+mse_neg <- findChromPeaks(mse_neg[idx_sample_neg], param,
+                          msLevel = 1L, chunkSize = 2L)
+
+param <- MergeNeighboringPeaksParam(expandRt = 6, expandMz = 0.0015,
+                                    minProp = 0.75)
+mse_pos <- refineChromPeaks(mse_pos, param, chunkSize = 2L)
+print("Positive mode:")
+chromPeakData(mse)$merged |>
+                      table() 
+
+mse_neg <- refineChromPeaks(mse_neg, param, chunkSize = 2L)
+print("Negative mode:")
+chromPeakData(mse_neg)$merged |>
+                      table()
+
+saveMsObject(mse_pos,
+             AlabasterParam(path = file.path("res/hmgu/objects/mse_pos")))
+saveMsObject(mse_neg,
+             AlabasterParam(path = file.path("res/hmgu/objects/mse_neg")))
+```
+
+I am struggling with the noise settings. Pauline tells me she had it set up at
+500 on mzmine. but with 500 i get only 55% of the standard detected.
+and she gets much more. 
+
+So i'm not sure, this also mean the technique is maybe not the best (we prob 
+should NOT have such low abundances.)
+
+So either we go for NO noise threshold and then deal with things that are just 
+noise later on. or we accept we miss the low abundance peak and this gives just
+a actually view of the analytical platform maybe not being great for this 
+(or samples were too diluted.)
+
+I've decided to go with 500 for now and accepting we will be loosing some peaks. 
+
+
+# Matching chrompeaks against theoretical m/z
+
+```{r}
+# load 
+mse_pos <- readMsObject(XcmsExperiment(), 
+                        AlabasterParam(path = file.path("res/hmgu/objects/mse_pos")), 
+                        spectraPath = file.path("data/hmgu/HE_pos_mzml/"))
+
+mse_neg <- readMsObject(XcmsExperiment(),
+                        AlabasterParam(path = file.path("res/hmgu/objects/mse_neg")), 
+                        spectraPath = file.path("data/hmgu/HE_neg_mzml/"))
+```
+
+When performing this automatically i will need to split the object and the 
+metadata mixture by mixture. 
+To set up the process right now I will just do it for one mixture.
+
+```{r}
+# subset
+sp_meta <- split(meta_pos, meta_pos$filname)
+x_meta <- sp_meta[[1]]
+x_mse_pos <- mse_pos[1]
+x_mse_neg <- mse_neg[1]
+```
+
+
+```{r}
+#| code-fold: true
+#| code-summary: "Show the code"
+  
+# Create a target data frame with the theoretical m/z values for the adducts 
+# we want to check
+target <- data.frame(mzmin = x_meta$X.M.H.....18 - 0.05,
+                     mzmax = x_meta$X.M.H.....18 + 0.05, 
+                     compounds = x_meta$ChEBI.name, 
+                     adduct = "[M+H]+")
+target <- rbind(target, data.frame(mzmin = x_meta$X.M.Na.....19 - 0.05, 
+                     mzmax = x_meta$X.M.Na.....19 + 0.05, 
+                     compounds = x_meta$ChEBI.name,
+                     adduct = "[M+Na]+"))
+
+target$detected_pos <-  FALSE
+target$detected_neg <-  FALSE
+target$dectected_tot <- 0
+target$chrompeaks_pos <- NA
+target$chrompeaks_neg <- NA
+
+
+#' Match the peaks to the theoretical m/z values
+#'
+#' @param object_pos The positive mode xcmsExp object
+#' @param object_neg The negative mode xcmsExp object
+#' @param target The target data frame with the theoretical m/z values
+#' @return A data frame with the matched peaks
+#'
+#' @importFrom S4Vectors DataFrame
+#'
+#' @export
+#'
+#' @examples
+#' mtch_peaks_std(object, target)
+mtch_peaks_std <- function(object_pos, object_neg, target) {  
+  cp_pos <- as.data.frame(chromPeaks(object_pos))
+  cp_neg <- as.data.frame(chromPeaks(object_neg))
+  for (i in seq_len(nrow(target))) {
+    idx <- which(cp_pos$mz >= target[i, "mzmin"] & 
+                 cp_pos$mz <= target[i, "mzmax"])
+    l <- length(idx)
+    if (l == 0) next
+    target[i, "detected_pos"] <- target[i, "detected_pos"] + l
+    target[i, "chrompeaks_pos"] <- paste(rownames(cp_pos)[idx], collapse = "|")
+    # check if the peak is in the negative mode
+    idx_neg <- which(cp_neg$mz >= target[i, "mzmin"] & 
+                     cp_neg$mz <= target[i, "mzmax"])
+    l_neg <- length(idx_neg)
+    if (l_neg == 0) next
+    target[i, "detected_neg"] <- target[i, "detected_neg"] + l_neg
+    target[i, "chrompeaks_neg"] <- paste(rownames(cp_neg)[idx_neg], 
+                                         collapse = "|")
+  }
+  return(target)
+}
+# i need to figure out what is the best output for downstream stuff 
+
+target <- mtch_peaks_std(object_pos = x_mse_pos, object_neg = x_mse_neg, target)
+
+target$detected_tot <- target$detected_pos + target$detected_neg
+sum(target$detected_tot != 0)/nrow(target) * 100
+```
+
+last run gave me 55%.. which is not great compared to what Pauline had... 
+
+Below is the res table:
+
+-   One row is a compounds with a specific adduct
+-   I would transform it somehow so that one row is one compound.
+    -   But only do that at the end.
+
+```{r}
+#result object
+target
+```
+
+# Multiples Peaks per m/z
+
+-   I put a compound name it plots the area with identified peak(s)
+    -   I should prob implement to also show where the ms2 peaks are.
+
+```{r}
+plot_standard <- function(object, compound = character(), polarity = c("pos", "neg")) {
+  polarity <- match.arg(polarity)
+  c_idx <- which(target$compounds == compound)
+  for (i in c_idx) {
+    if (polarity == "pos") 
+    cps <- strsplit(target$chrompeaks_pos[i], "\\|")[[1]]
+    if (polarity == "neg")
+    cps <- strsplit(target$chrompeaks_neg[i], "\\|")[[1]]
+    if (all(is.na(cps))) next
+    eic <- chromPeakChromatograms(object, peaks = cps, expandRt = 10, 
+                                  expandMz =0.02)
+    plot(eic, sub = target$adduct[i])
+    }
+}
+
+#examples below 
+plot_standard(x_mse_pos, compound ="N(6)-acetyl-L-lysine", polarity = "pos") # different peak shape between the adducts at same RT.. 
+plot_standard(x_mse_pos, compound ="5-hydroxy-L-tryptophan") # example of one that we need more to determine
+plot_standard(x_mse_pos, compound ="sarcosine") # this is a nice clean one
+```
+
+## Grouping based on RT 
+
+-   If ambiguity i want to select the right peak based on if they are similar to the different adduct and NEG 
+
+```{r}
+idx_amb <- target$detected_neg > 1 | target$detected_pos > 1
+
+## for imp, subset target to make it easier 
+
+target_amb <- target[idx_amb, ]
+
+
+
+## check both ionisaiton for RT grouping 
+#' condition are: need to be detected in both neg and pos
+#' the Rt need to overlap in some ways 
+idx <- target_amb$detected_pos > 0 & target_amb$detected_neg > 0
+
+## check adducts for RT grouping 
+#' here i have to go through compounds OR change the table somehow. 
+
+
+```
+
+Notes: i guess i should ALSO check that if both adduct: same RT
+and 
+if both pos and neg, same RT 
+could be some validation  function.
+
+# MS1 
+
+- plot MS1 for all identified chrom peaks (with labels)
+
+
+# MS2
+
+- first step here would be to appen to the target object wether the peaks HAS 
+MS2 or not
+
+## experimental ms2
+
+```{r}
+ms2peaks <- chromPeakSpectra(x_mse, method = "all", 
+                             expandRt = 2, expandMz = 0.01, 
+                             chromPeakColumns = c("rt", "mz", "mzmin",
+                                                  "mzmax", "rtmin", "rtmax",
+                                                  "into")) 
+
+length(ms2peaks) #2484
+
+## clean ms2. 
+#' Remove low intensity peaks
+low_int <- function(x, ...) {
+    x > max(x, na.rm = TRUE) * 0.05
+}
+# full ms2 data 
+ms2peaks <- filterIntensity(ms2peaks, intensity = low_int)
+#' Remove precursor peaks and restrict to spectra with a minimum
+#' number of peaks
+ms2peaks <- filterPrecursorPeaks(ms2peaks, ppm = 50, mz = ">=")
+ms2peaks <- ms2peaks[lengths(ms2peaks) > 1] |>
+    scalePeaks()
+
+ms2peaks <- setBackend(backend = MsBackendMemory(), object = ms2peaks)
+ms2peaks <- applyProcessing(ms2peaks)
+```
+
+Apply the same to the ref database.
+
+```{r}
+#' load reference data
+#ah <- AnnotationHub()
+#' List available MassBank data sets
+#query(ah, "MassBank")
+#' Load one MassBank release
+#mb <- ah[["AH116166"]]
+
+library(RSQLite)
+library(MsBackendSql)
+dbfile <- "MsBackendSql.GNPS.matchms.cleaned.v1.sqlite"
+con <- dbConnect(SQLite(), dbfile)
+mb <- Spectra(con, source = MsBackendSql())
+
+## szubset for expected compounds
+idx <-  which(mb$inchikey %in% x_meta$InChIKey)
+ms2_ref <- mb[idx]
+ms2_ref[ms2_ref$polarity == 1,]
+
+ms2_ref <-  filterIntensity(ms2_ref, intensity = low_int) |>
+    filterPrecursorPeaks(ppm = 50, mz = ">=")
+
+ms2_ref <- ms2_ref[lengths(ms2_ref) > 1] |>
+     scalePeaks()
+
+ms2_ref <- setBackend(backend = MsBackendMemory(), object = ms2_ref)
+ms2_ref <- applyProcessing(ms2_ref)
+```
+
+
+
+## Match experimental and ref MS2
+
+```{r}
+library(MetaboAnnotation)
+prm <- CompareSpectraParam(ppm = 40, tolerance = 0.05,
+                           requirePrecursor = TRUE,
+                           THRESHFUN = function(x) which(x >= 0.4))
+
+ms2peaks_mtch <- matchSpectra(ms2peaks, ms2_ref, param = prm)
+ms2peaks_mtch
+```
+
+```{r, eval=FALSE}
+ms2_mtch <- ms2peaks_mtch[whichQuery(ms2peaks_mtch)]
+
+library(pander)
+
+df <- matchedData(ms2_mtch)[, c("target_compound_name",
+                                       "target_inchikey", "score")]
+df <- as.data.frame(df)
+pandoc.table(df,
+             style = "rmarkdown",
+             split.table = Inf)
+
+idx <- which(df$target_inchikey == x_meta$InChIKey)
+```
+
+
+I would also for both test whether we get better/easier results if we merge the
+ms2. - for ref i guess we should merge compounds that have same inchikey
+
+-   for experimental, i would merge all spectra from one peak.
+-   compare merging non merging
+
+# next: adduct and isotope
+
+Once we have found some compound that we have high confidence level in. we can
+do 2 things
+
+## isotopes
+
+-   for one chrompeak get the full scan MS1 - use the isotopologues fct to find
+    isotopes. ge the experimental one and comapre to theroretical isotpe
+    pattern, envipat
+
+## adduct based on peak shape correlation
+
+This is were we test the peak shape correlation that Anna tested using
+artificial data. We would need some other way to confirm this though, not sure
+how..
+
+
+TODO: 
+
+- Improve preprocessing, some peaks are cuyt into multiple ones I think.
+
+
