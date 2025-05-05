@@ -80,6 +80,23 @@ names(col_sample_type)[seq_along(unique(sampleData(mse_pos)$sample_type))] <-
 bpc_pos <- chromatogram(mse_pos, aggregationFun = "max")
 bpc_neg <- chromatogram(mse_neg, aggregationFun = "max")
 
+xl <- range(unlist(lapply(bpc_pos, rtime)), unlist(lapply(bpc_neg, rtime)))
+yl <- max(unlist(lapply(bpc_pos, intensity)),
+          unlist(lapply(bpc_neg, intensity)), na.rm = TRUE)
+plot(3, 3, pch = NA, xlim = xl, ylim = c(-yl, yl), xlab = "rtime",
+     ylab = "intensity", main = "BPC")
+abline(h = 0)
+grid()
+
+for (i in seq_len(ncol(bpc_pos))) {
+    points(rtime(bpc_pos[, i]), intensity(bpc_pos[, i]), type = "l",
+           col = paste0(col_sample_type[bpc_pos$sample_type[i]], 80))
+}
+for (i in seq_len(ncol(bpc_neg))) {
+    points(rtime(bpc_neg[, i]), -intensity(bpc_neg[, i]), type = "l",
+           col = paste0(col_sample_type[bpc_neg$sample_type[i]], 80))
+}
+
 par(mfrow = c(2, 1))
 plot(bpc_pos, col = paste0(col_sample_type[bpc_pos$sample_type], 80))
 grid()
