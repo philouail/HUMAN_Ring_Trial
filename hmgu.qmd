@@ -822,7 +822,7 @@ x_match_res[unique(true$chrom_peak_id), "ms2_true_count"] <- table(true$chrom_pe
 i <- true$.original_query_index[1]
 j <- true$target_index[1]
 query_ms2 <- query(ms2_mtch)[i]
-target_ms2 <- target(ms2_mtch)[j] #i am not sure this works properly 
+target_ms2 <- target(ms2_mtch)[j]
 
 plotSpectraMirror(query_ms2, target_ms2, main = true$target_ChEBI.name[1])
 
@@ -849,15 +849,11 @@ Also GNPS has some adducts info. Would be nice to quickly check that.
 Now we would go through each standards. and create regions info/concatenate 
 results based on RT regions. 
 
-- RT grouping 
-  - define regions of interest. 
-  - combine results for peaks of same region.
-
 ```{r}
 library(MsFeatures)
 ## below we group based on RT
 sp_res <- split(x_match_res, x_match_res$target_ChEBI.name)
-x_match_res <- apply(sp_res, function(z) {
+x_match_res <- lapply(sp_res, function(z) {
     rts  <- chromPeaks(x_mse_pos)[z$chrom_peak_id, "rt"]
     param <- SimilarRtimeParam(diffRt = 10, groupFun = groupClosest)
     groups <- groupFeatures(rts, param)
@@ -868,7 +864,14 @@ x_match_res <- apply(sp_res, function(z) {
     as.data.frame()
 ```
 
-oki now goruped we can work/summarize "per standard"
+I would export that as a single peak evidence file 
+
+```{r}
+write.csv(x_match_res, 
+          file = "res/hmgu/peak_evidence.csv", row.names = FALSE)
+```
+
+oki now grouped we can work/summarize "per standard"
 
 ```{r}
 ## concatenate below 
@@ -891,9 +894,13 @@ oki now goruped we can work/summarize "per standard"
 ##  ms2_true_count: add
 ## test on x_res 
 
+
+## comments: 
+## Maybe we could just summaries the MS2 matching by TRUE/FALSE whether we 
+## have a true positive identification ?
 split(x_res, x_res$rt_region) |>
     lapply(function(z) {
-        idx_rmv <- colnames(z) %in% c("adduct_formula", "adduct_mz")
+        idx_rmv <- colnames(z) %in% c("adduct_formula", "adduct_mz", "score", "ppm_error")
         res <- z[1, !idx_rmv]
         res$chrom_peak_id <- paste(z$chrom_peak_id, collapse = "|")
         res$adduct <- paste(z$adduct, collapse = "|")
@@ -907,30 +914,45 @@ split(x_res, x_res$rt_region) |>
         res$ms2_count <- sum(z$ms2_count)
         res$ms2_matched_count <- sum(z$ms2_matched_count)
         res$ms2_true_count <- sum(z$ms2_true_count)
+        res$number_of_peaks <- nrow(z)
         res
     }) |>
     do.call(what = rbind) |>
     as.data.frame()
+```
 
+Save below for rt region results 
 
-## plots 
+```{r}
+write.csv(x_match_res, 
+          file = "res/hmgu/peak_evidence_rt_grouped.csv", row.names = FALSE)
+```
+
+Plotting should then be down below per standard/regions to faciliate the 
+interpretation.
+
+```{r, eval=FALSE}
+## plots ## - plot the EICs for each standard, with the RT regions.
 eic <- chromPeakChromatograms(x_mse_pos, 
                               peaks = x_match_res$chrom_peak_id[idx], 
                               expandRt = 10, 
                               expandMz =0.02)
 fData(eic)$adduct <- x_match_res$adduct[idx]
-plot(eic) ## i'd like t plot with the adduct as a subtitle but i'm struggling. 
+plot(eic) ## i'd like to plot with the adduct as a subtitle but i'm struggling. 
 
-## - i would then actually perform all the plots here below and organize them per standard/regions/... 
-## It would mean some reorganisation, i want to check if that make sense first. 
+## reorganise the one aboves and create separate function 
 ```
+
   
-- output should be: regions rt limit, number of adducts ?
+Next to implement: 
 
 - position of peak compared to NAPS peaks
-
+  - Preprocess NAPS data/identifies peaks
+  - have a column NAPS_left and NAPS_right with the NAPS peaks ID
+    
 - peak shape correlation score between peaks of same regions. 
 This is were we test the peak shape correlation that Anna tested using
-artificial data. We would need some other way to confirm this though, not sure
-how..
+artificial data.
+
+- Integrate neg results 
 
