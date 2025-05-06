@@ -390,22 +390,22 @@ Comment:
     data set later.
 
 ```{r,eval=FALSE}
-param <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
-                       snthresh = 7, noise = 100) 
+cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
+                     snthresh = 7, noise = 100) 
 
-mse_pos <- findChromPeaks(mse_pos[idx_sample_pos], param, 
+mse_pos <- findChromPeaks(mse_pos[idx_sample_pos], cwp, 
                           msLevel = 1L, chunkSize = 2L)
-mse_neg <- findChromPeaks(mse_neg[idx_sample_neg], param,
+mse_neg <- findChromPeaks(mse_neg[idx_sample_neg], cwp,
                           msLevel = 1L, chunkSize = 2L)
 
-param <- MergeNeighboringPeaksParam(expandRt = 6, expandMz = 0.0015,
-                                    minProp = 0.75)
-mse_pos <- refineChromPeaks(mse_pos, param, chunkSize = 2L)
+mnpp <- MergeNeighboringPeaksParam(expandRt = 6, expandMz = 0.0015,
+                                   minProp = 0.75)
+mse_pos <- refineChromPeaks(mse_pos, mdpp, chunkSize = 2L)
 print("Positive mode:")
 chromPeakData(mse_pos)$merged |>
                          table() 
 
-mse_neg <- refineChromPeaks(mse_neg, param, chunkSize = 2L)
+mse_neg <- refineChromPeaks(mse_neg, mnpp, chunkSize = 2L)
 print("Negative mode:")
 chromPeakData(mse_neg)$merged |>
                       table()
@@ -605,6 +605,7 @@ points(mz(a)[[1L]][idx], intensity(a)[[1L]][idx], col = "#00ceff",
        type = "h")
 grid()
 
+
 #' Plot all
 dr <- file.path("res", "test")
 dir.create(dr, recursive = TRUE, showWarnings = FALSE)
@@ -626,6 +627,10 @@ for (i in seq_along(x_match_ms1_adducts)) {
     dev.off()
 }
 ```
+
+For that particular example/compound, there would be an ion with a larger
+intensity and hence potentially higher chance of being detected (as a
+chromatographic peak) and fragmented.
 
 We next validate for each of the identified/assigned chromatographic peaks
 whether the measured isotope pattern matches the theoretical isotope pattern
@@ -668,10 +673,12 @@ isopattern_to_spectra <- function(x) {
 ms1_theoretical_isopeaks <- isopattern_to_spectra(ip)
 ```
 
-We next calculate the similarity between the *measured* isotope peak pattern
-for each chromatographic peak and the theoretical isotope pattern calculated
-based on the adduct formula. In addition we create mirror plots for all pairs -
-one example is shown below.
+We next calculate the similarity between the *measured* isotope peak pattern for
+each chromatographic peak and the theoretical isotope pattern calculated based
+on the adduct formula. We could eventually use a different similarity
+calculation method that puts more weight/importance on the similarity of the
+isotope peak's intensity. In addition we create mirror plots for all pairs - one
+example is shown below.
 
 ```{r}
 plotSpectraMirror(x_match_ms1_isopeaks[4],
@@ -717,9 +724,14 @@ otherwise.
   number of positive match, and number of TRUE positive match.
 - Another output should be the mirror plot with name of compound at the top. 
 
+We use a rather loose value for parameter `expandMz` in the selection of
+fragment spectra for each chromatographic peak as we don't expect any
+additional/other ion being present close to the standard's tentative
+chromatographic peak.
+
 ```{r}
 ms2peaks <- chromPeakSpectra(x_mse_pos, method = "all", 
-                             expandRt = 2, expandMz = 0.01, ## too loose ? 
+                             expandRt = 2, expandMz = 0.01, 
                              peaks = rownames(x_match_res) ,
                              chromPeakColumns = c("rt", "mz", "mzmin",
                                                   "mzmax", "rtmin", "rtmax",
@@ -729,10 +741,11 @@ ms2peaks <- chromPeakSpectra(x_mse_pos, method = "all",
 ## that
 
 ## append number of MS2 to the result table
-x_match_res[unique(ms2peaks$chrom_peak_id), "ms2_count"] <- table(ms2peaks$chrom_peak_id)
+cnts <- table(ms2peaks$chrom_peak_id)
+x_match_res[names(cnts), "ms2_count"] <- as.integer(cnts)
 
 ## clean ms2. 
-#' Remove low intensity peaks
+#' Remove low intensity peaks; this is 5% of max intensitity. too restrictive?
 low_int <- function(x, ...) {
     x > max(x, na.rm = TRUE) * 0.05
 }
@@ -760,9 +773,10 @@ ms2_ref <- Spectra(con, source = MsBackendSql())
 ## szubset for expected compounds
 # idx <-  which(mb$inchikey %in% x_meta$InChIKey) for now no
 # ms2_ref <- mb[idx]
-ms2_ref <- ms2_ref[ms2_ref$polarity == 1,]
+ms2_ref <- ms2_ref[ms2_ref$polarity == 1]
 
-ms2_ref <-  filterIntensity(ms2_ref, intensity = low_int) |>
+#' Same spectra processing as with the experimental data
+ms2_ref <- filterIntensity(ms2_ref, intensity = low_int) |>
     filterPrecursorPeaks(ppm = 50, mz = ">=")
 
 ms2_ref <- ms2_ref[lengths(ms2_ref) > 1] |>
@@ -771,6 +785,27 @@ ms2_ref <- ms2_ref[lengths(ms2_ref) > 1] |>
 ms2_ref <- setBackend(backend = MsBackendMemory(), object = ms2_ref)
 ms2_ref <- applyProcessing(ms2_ref)
 ```
+
+Quick overview on the filtered references database.
+
+```{r}
+length(ms2_ref)
+
+length(unique(ms2_ref$inchikey))
+```
+
+We have thus only reference spectra for a relatively low number of
+compounds. What's even more surprising is that, although we filtered above for
+positive polarity spectra, negatively charged adduct definitions are reported:
+
+```{r}
+sort(table(ms2_ref$adduct), decreasing = TRUE)
+
+#' Is there any issue with either the reported polarity or adduct information?
+```
+
+We however proceed for now with this reference database. We use rather relaxed
+m/z similarity settings accounting for potential uncalibrated or low resolution spectra.
 
 ```{r}
 prm <- CompareSpectraParam(ppm = 40, tolerance = 0.05,
@@ -784,36 +819,45 @@ ms2peaks_mtch
 ```{r}
 ms2_mtch <- ms2peaks_mtch[whichQuery(ms2peaks_mtch)]
 
-df <- matchedData(ms2_mtch)[, c("target_compound_name",
-                                       "target_inchikey", "score", "chrom_peak_id", ".original_query_index", "target_adduct")]
+df <- matchedData(ms2_mtch)[, c("chrom_peak_id", "target_compound_name",
+                                "target_inchikey", "score", 
+                                ".original_query_index", "target_adduct")]
 df$target_index <- targetIndex(ms2_mtch)
 df$query_index <- queryIndex(ms2_mtch)
+#' Report for each chrom peak <-> compound combination the highest matching
+#' pair
 df <-
     df |>
+    as.data.frame() |>
     split(f = paste(df$chrom_peak_id, df$target_inchikey)) |>
     lapply(function(z) {
         z[which.max(z$score), ]
     }) |>
-    do.call(what = rbind) |>
-    as.data.frame()
-
-df <- as.data.frame(df)
+    do.call(what = rbind.data.frame)
+rownames(df) <- NULL
 pandoc.table(df,
              style = "rmarkdown",
              split.table = Inf)
 
-## append number of spectra that have at least one match. 
-## need to use the columns .original_query_index and chrom_peak_id
+#' append number of spectra that have at least one match. 
+#' need to use the columns .original_query_index and chrom_peak_id
 try <- df[!duplicated(df$.original_query_index), ]
-x_match_res[unique(try$chrom_peak_id), "ms2_matched_count"] <- table(try$chrom_peak_id)
+tmp <- table(try$chrom_peak_id) # works also if chrom_peak_id is not ordered
+x_match_res[names(tmp), "ms2_matched_count"] <- as.integer(tmp)
 
-## now need to check using inchiKey if it's a TRUE positive identification
-## onlly match first partt of inchikey, using sub("-.*", "", x)
-true <- df[sub("-.*", "", df$target_inchikey) %in% sub("-.*", "", x_meta$InChIKey), ]
-## add standnard name 
-true <- merge(true, x_match_res[, c("target_ChEBI.name", "chrom_peak_id")],
-              by = "chrom_peak_id")
-x_match_res[unique(true$chrom_peak_id), "ms2_true_count"] <- table(true$chrom_peak_id)
+#' get for each chrom peak the inchi key of the associated (expected) compound
+df$query_inchikey <- x_match_res[df$chrom_peak_id, "target_InChIKey"]
+df$query_inchikey_a <- sub("-.*", "", df$query_inchikey)
+df$target_inchikey_a <- sub("-.*", "", df$target_inchikey)
+
+#' Restrict to matches where the query target matches the expected target
+#' compound
+true <- df[df$query_inchikey_a == df$target_inchikey_a, , drop = FALSE]
+true <- true[!duplicated(true$.original_query_index), , drop = FALSE]
+
+#' Count number of chrom peak to target match and add to final table
+tmp <- table(true$chrom_peak_id)
+x_match_res[names(tmp), "ms2_true_count"] <- as.integer(tmp)
 ```
 
 
@@ -846,6 +890,10 @@ Also GNPS has some adducts info. Would be nice to quickly check that.
 
 ## RT grouping 
 
+For each standard:
+- group identified/assigned chrom peaks into *RT regions*. This should put
+  adduct chrom peaks into the same group.
+
 Now we would go through each standards. and create regions info/concatenate 
 results based on RT regions. 
 
@@ -857,11 +905,11 @@ x_match_res <- lapply(sp_res, function(z) {
     rts  <- chromPeaks(x_mse_pos)[z$chrom_peak_id, "rt"]
     param <- SimilarRtimeParam(diffRt = 10, groupFun = groupClosest)
     groups <- groupFeatures(rts, param)
+    z$rt <- rts
     z$rt_regions <- as.numeric(groups)
     z
 }) |> 
-    do.call(what = rbind) |>
-    as.data.frame()
+    do.call(what = rbind.data.frame)
 ```
 
 I would export that as a single peak evidence file 
@@ -882,9 +930,10 @@ oki now grouped we can work/summarize "per standard"
 ##  the columns starting with "target-" are identical for compound of the same stndard 
 ##  rtmin: take the min 
 ##  rtmax: take the max
+##  rt: report also the median absolute deviation of the rt's per group (`mad(x_res$rt)`)
 ##  adduct, chrompeak_id: concatenate with |
-##  into: average
-##  score : what is it ????
+##  into: average - or report the max?
+##  score : normalized dot product spectra similarity score
 ##  ms1_adduct_count: add 
 ##  ms1_adduct_05_count: add
 ##  isopeak_count: add
