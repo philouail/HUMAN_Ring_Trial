@@ -18,3 +18,11 @@ measured. Since the ground truth (number and identity of metabolite) is known,
 we can compare the different chromatographic methods within a laboratory and
 compare the different LC-MS setups from different laboratories using the
 standardized method.
+
+The first step of this would be to automatise the library building as much as possible. 
+
+each lab will have their own preprocessing files which will output a certain number of 
+object used in the library building. 
+
+The library file however will be common to all. and will generate 2 csv files as well as a number of plot to help in library building
+and making informed choice in case of ambiguity. 
