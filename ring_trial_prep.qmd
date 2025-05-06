@@ -9,8 +9,8 @@ editor: visual
 
 No replicates (probably), total of 83 mixtures, 1299 metabolite standards.
 
-Each lab will run these twice, one times with a lab specific set up and one time
-with a harmonized method.
+Each lab will run these twice, one times with a lab specific set up and one
+time with a harmonized method.
 
 Harmonized method:
 
