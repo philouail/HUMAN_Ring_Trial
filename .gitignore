@@ -6,3 +6,4 @@
 /res/hmgu/objects/mse_neg
 /res/hmgu/objects/mse_pos
 *.sqlite
+/res/hmgu/objects

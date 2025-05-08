@@ -1,0 +1,397 @@
+---
+title: "example_preprocessing"
+format: html
+editor: visual
+---
+
+# Set up & raw data investigation
+
+-   Workflow: HMGU Reference Method (pos and neg)
+
+This file is here to exemplify the preprocessing steps. To show what we are 
+looking for when looking at raw and processed data. A file with the generic 
+worklow is called "generic_preprocessing.qmd" and is available. Please use this
+and adapt it to your needs.
+
+Ideally the output should be the same. 
+
+## Load Required Packages
+
+```{r, message=FALSE, warning=FALSE}
+library(readxl)
+library(S4Vectors)
+library(MsExperiment)
+library(xcms)
+library(Spectra)
+library(Biobase)
+library(pheatmap)
+library(alabaster.base)
+library(MsIO)
+library(RColorBrewer)
+library(MetaboCoreUtils)
+library(MetaboAnnotation)
+```
+
+## Load metadata and raw files
+
+```{r}
+lab <- "hmgu"
+```
+
+```{r, warning=FALSE, message=FALSE}
+#' Load compound metadata (sheet 2);
+meta_pos <- read_xlsx(paste0("data/", lab, "/RefMethod_HE.xlsx"), sheet = 2L, 
+                      col_names = TRUE, skip = 1, .name_repair = "minimal") |>
+    as.data.frame(check.names = FALSE)
+files_name <- unique(meta_pos$filname)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Load pos data
+seq_pos <- read_xlsx(paste0("data/", lab, "/HE_pos_mzml/seq.xlsx"), 
+                 col_names = TRUE) |> as.data.frame()
+seq_pos$polarity <- "pos"
+# load neg data
+seq_neg <- read_xlsx(paste0("data/", lab, "/HE_neg_mzml/seq.xlsx"), 
+                 col_names = TRUE) |> as.data.frame()
+seq_neg$polarity <- "neg"
+seq <- rbind(seq_pos, seq_neg)
+
+seq$filename <- paste0(seq$`Data File`, ".mzML")
+mse <- readMsExperiment(paste0("data/", lab,"/HE_mzml/", seq$filename), 
+                            seq)
+sampleData(mse)
+```
+
+Below we set up the parallel processing, which will allow to make the
+preprocessing MUCH more efficient. please adjust to the number of cores that
+your computer can handle (mine has 4 so I use 2 or 3 for data analysis)
+
+This number will then be the same as the one oyu input in the `chunkSize =`
+parameter in the preprocessing steps.
+
+```{r}
+#' Set up parallel processing using 2 cores
+if (.Platform$OS.type == "unix") {
+    register(MulticoreParam(2))
+} else {
+    register(SnowParam(2))
+}
+```
+
+## Overview and Quality 
+
+Separate pos and neg for the overview below:
+
+```{r}
+mse_pos <- mse[sampleData(mse)$polarity == "pos"]
+mse_neg <- mse[sampleData(mse)$polarity == "neg"]
+```
+
+
+Suggestion to extract the BPC of all samples and plot them, all in one.
+
+```{r, eval=FALSE}
+#| fig-height: 8
+#| fig-width: 6
+col_sample_type <- brewer.pal(
+    n = max(3, length(unique(sampleData(mse_pos)$sample_type))), "Set2")
+names(col_sample_type)[seq_along(unique(sampleData(mse_pos)$sample_type))] <-
+    unique(sampleData(mse_pos)$sample_type)
+bpc_pos <- chromatogram(mse_pos, aggregationFun = "max")
+bpc_neg <- chromatogram(mse_neg, aggregationFun = "max")
+
+xl <- range(unlist(lapply(bpc_pos, rtime)), unlist(lapply(bpc_neg, rtime)))
+yl <- max(unlist(lapply(bpc_pos, intensity)),
+          unlist(lapply(bpc_neg, intensity)), na.rm = TRUE)
+plot(3, 3, pch = NA, xlim = xl, ylim = c(-yl, yl), xlab = "rtime",
+     ylab = "intensity", main = "BPC")
+abline(h = 0)
+grid()
+
+for (i in seq_len(ncol(bpc_pos))) {
+    points(rtime(bpc_pos[, i]), intensity(bpc_pos[, i]), type = "l",
+           col = paste0(col_sample_type[bpc_pos$sample_type[i]], 80))
+}
+for (i in seq_len(ncol(bpc_neg))) {
+    points(rtime(bpc_neg[, i]), -intensity(bpc_neg[, i]), type = "l",
+           col = paste0(col_sample_type[bpc_neg$sample_type[i]], 80))
+}
+
+par(mfrow = c(2, 1))
+plot(bpc_pos, col = paste0(col_sample_type[bpc_pos$sample_type], 80))
+grid()
+legend("topright", col = col_sample_type, lwd = 1,
+       legend = names(col_sample_type))
+plot(bpc_neg, col = paste0(col_sample_type[bpc_neg$sample_type], 80))
+grid()
+```
+
+Observations:
+
+-   Naps seem to be measured in regular intervals (but with different
+    intensities) between \~ 200 and 600 seconds.
+-   some peaks seem to be sample file-specific - which is actually what we
+    would expect, since this should represent the signal from the spiked
+    (added) standard.
+
+
+```{r}
+#' Range
+range(rtime(mse_pos))
+range(rtime(mse_neg))
+
+#' Count the number of spectra with a specific MS level per file.
+print("Positive mode")
+spectra(mse_pos) |>
+    msLevel() |>
+    split(fromFile(mse_pos)) |>
+    lapply(table) |>
+    do.call(what = cbind)
+
+#' Count the number of spectra with a specific MS level per file.
+print("Negative mode")
+spectra(mse_neg) |>
+    msLevel() |>
+    split(fromFile(mse_neg)) |>
+    lapply(table) |>
+    do.call(what = cbind)
+```
+
+Comments: Nothing alarming. Similar-ish number of spectra.
+
+# Estimate peak-picking parameters on ONE file.
+
+```{r}
+sp_meta <- split(meta_pos, meta_pos$filname)
+x_meta <- sp_meta[[1]]
+x_mse <- mse_pos[idx_sample_pos][1]
+```
+
+## Extract theoretical EICs
+
+Using theoretical m/z for both main positive adducts and all along the
+retention time.
+
+```{r, eval=FALSE}
+#| code-fold: true
+#| code-summary: "Show the code"
+
+#' Calculate m/z from the exact mass
+theo_mz <- mass2mz(x_meta[, "M"], c("[M+H]+", "[M+Na]+")) |>
+    as.vector()
+#' Define the m/z range.
+theo_mzr <- cbind(mzmin = theo_mz - MsCoreUtils::ppm(theo_mz, 20),
+                  mzmax = theo_mz + MsCoreUtils::ppm(theo_mz, 20))
+#' Expand by a fixed tolerance.
+theo_mzr[, 1L] <- theo_mzr[, 1L] - 0.005
+theo_mzr[, 2L] <- theo_mzr[, 2L] + 0.005
+eicsMH <- chromatogram(x_mse, mz = theo_mzr)
+
+#' would use the ID + adduct as file name.
+fData(eicsMH)$std_id <- paste0(rep(x_meta$ChEBI, 2), "-", 
+                               rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
+fData(eicsMH)$std_name <- paste0(rep(x_meta$`ChEBI name`, 2), "-", 
+                               rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
+rownames(eicsMH) <- fData(eicsMH)$std_id
+
+dr <- "res/hmgu/eics_full_rt_slices/M_ions/"
+dir.create(dr, recursive = TRUE, showWarnings = FALSE)
+for (i in seq_along(eicsMH)) {
+    png(paste0(dr, "EIC_", fData(eicsMH)$std_id[i], ".png"),
+        width = 12, height = 8, units = "cm", res = 600, pointsize = 4)
+    plot(eicsMH[i, ], main = fData(eicsMH)$std_name[i])
+    legend("topright",
+           legend = c(mzmin = format(fData(eicsMH)$mzmin[i], digits = 6),
+                      mzmax = format(fData(eicsMH)$mzmax[i], digits = 6)))
+    grid()
+    dev.off()
+}
+```
+
+We have `r length(theo_mz)` number of standard.
+
+After a quick check they seem pretty noisy, and they all have more than one
+very big peak.
+
+## Peak picking param set up
+
+Use the previous EICs to set up parameters. This should happen only once per
+lab.
+
+First quickly checking a few peaks to look for peak width:
+
+```{r, eval=FALSE}
+plot(eicsMH["CHEBI:15611-[M+Na]+"], xlim = c(0, 30)) # 6secs
+plot(eicsMH["CHEBI:16856-[M+H]+"], xlim = c(10, 50)) # 10s 
+plot(eicsMH["CHEBI:15699-[M+H]+"], xlim = c(20, 40)) #7s 
+```
+
+Will set up for `c(4, 12 seconds)` peak-width. Noise seems to be fairly low.
+Maybe a cut-off around 200 to prevent bad peaks to be detected, could be
+implemented. The intensity are super low for some standard however.
+
+For ppm deviation:
+
+```{r, eval=FALSE}
+mz <- mz(eicsMH["CHEBI:15699-[M+H]+"]) |> as.vector()
+cst <- x_mse |>
+    spectra() |>
+    filterMsLevel(msLevel = 1L) |>
+    filterRt(rt = c(25, 27)) |>
+    filterMzRange(mz = mz)
+
+x_mse |>
+    filterMsLevel(1L) |>
+    filterRt(c(18, 30)) |>
+    filterMzRange(mz = mz) |>
+    plot()
+
+#' Show the number of peaks per m/z filtered spectra
+lengths(cst)
+```
+
+```{r, eval=FALSE}
+#' Calculate the difference in m/z values between scans
+mz_diff <- cst |>
+    mz() |>
+    unlist() |>
+    diff() |>
+    abs()
+
+#' Express differences in ppm
+range(mz_diff * 1e6 / mean(unlist(mz(cst))))
+```
+
+Took large and set up 20ppm.
+
+# Peak picking on ALL samples
+
+Comment:
+
+-   I would run a rather inclusive peak detection. We could filter/restrict the
+    data set later.
+-   We run it on the full dataset. We will separate the mixture later on.
+
+```{r}
+cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
+                     snthresh = 7, noise = 100) 
+
+mse <- findChromPeaks(mse, cwp, 
+                          msLevel = 1L, chunkSize = 2L)
+
+mnpp <- MergeNeighboringPeaksParam(expandRt = 6, expandMz = 0.0015,
+                                   minProp = 0.75)
+mse <- refineChromPeaks(mse, mnpp, chunkSize = 2L)
+```
+
+Some comments:
+
+-   I am struggling with the noise settings. Pauline tells me she had it set up
+    at 500 on mzmine. but with 500 i get only 55% of the standard detected. and
+    she gets much more.
+-   This also mean the technique is maybe not the best (we prob should NOT have
+    such low abundances.)
+-   So either we go for NO noise threshold and then deal with things that are
+    just noise later on. or we accept we miss the low abundance peak and this
+    gives just a actually view of the analytical platform maybe not being great
+    for this (or samples were too diluted.)
+
+# Alignment using NAPS
+
+We saw above that there does not seem to be a big shift in retention time
+between the samples. We will nonetheless align the samples using the NAPS
+samples.
+
+```{r}
+## Correspondence in POS mode using NAPS peaks only ? 
+sg <- factor(sampleData(mse)$Sample.Name, levels = c("NAPS"))
+pdp <- PeakDensityParam(sampleGroups = sg,
+                          minFraction = 1,
+                          binSize = 0.01, ppm = 10,
+                          bw = 2)
+mse <- groupChromPeaks(mse, param = pdp)
+
+#' Define parameters of choice
+subset <- which(sampleData(mse)$Sample.Name == "NAPS")
+pgp <- PeakGroupsParam(minFraction = 1, extraPeaks = 50, span = 0.5,
+                         subsetAdjust = "average",
+                         subset = subset)
+
+#' Perform the alignment
+mse <- adjustRtime(mse, param = pgp)
+
+
+mse_pos <- mse[sampleData(mse)$polarity == "pos"]
+naps_pos <- mse_pos[sampleData(mse_pos)$Sample.Name == "NAPS"]
+
+mse_neg <- mse[sampleData(mse)$polarity == "neg"]
+naps_neg <- mse_neg[sampleData(mse_neg)$Sample.Name == "NAPS"]
+```
+
+plot
+
+```{r}
+#' Visualize alignment results
+plotAdjustedRtime(mse, peakGroupsPch = 1)
+grid()
+```
+
+## identify NAPS peaks.
+
+```{r}
+## loading info from NAPS 
+naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal")
+
+## calculate m/z 
+naps_info$mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[,1]
+naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M-H]-")[,1]
+naps_info <- data.frame(naps_info)
+
+## Perform correspondence in NAPS pos and neg 
+pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_pos)),
+                          minFraction = 1,
+                          binSize = 0.01, ppm = 10,
+                          bw = 2)
+naps_pos <- groupChromPeaks(naps_pos, param = pdp)
+
+pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_neg)),
+                          minFraction = 1,
+                          binSize = 0.01, ppm = 10,
+                          bw = 2)
+naps_neg <- groupChromPeaks(naps_neg, param = pdp)
+
+mtch <- matchValues(featureDefinitions(naps_pos)[, c("rtmed","mzmed")], naps_info, 
+                    MzParam(tolerance = 0, ppm = 5), 
+                    mzColname = c("mzmed", "mz_pos"))
+mtch <- mtch[whichQuery(mtch)]
+mtch
+naps_res_pos <- matchedData(mtch) |> data.frame()
+## comment: I cannot manage to get 20 peaks.. 
+## rt should be increasing. 
+naps_res_pos <- naps_res_pos[diff(naps_res_pos$rtmed) > 0,]
+
+## then do the same in NEG 
+
+mtch <- matchValues(featureDefinitions(naps_neg)[, c("rtmed","mzmed")], naps_info, 
+                    MzParam(tolerance = 0, ppm = 5), 
+                    mzColname = c("mzmed", "mz_neg"))
+mtch <- mtch[whichQuery(mtch)]
+mtch
+naps_res_neg <- matchedData(mtch) |> data.frame()
+naps_res_neg <- naps_res_neg[diff(naps_res_neg$rtmed) > 0,]
+
+## well not sure what to do with that but we have it at least. 
+```
+
+## export object for library building
+
+```{r}
+## export object needed for library building
+saveMsObject(mse,
+             AlabasterParam(path = file.path("res/", lab, "/objects/mse")))
+saveMsObject(mse_pos,
+             AlabasterParam(path = file.path("res/", lab, "/objects/mse_pos")))
+saveMsObject(mse_neg,
+             AlabasterParam(path = file.path("res/", lab, "/objects/mse_neg")))
+```
