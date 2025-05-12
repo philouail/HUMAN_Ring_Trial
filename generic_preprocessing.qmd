@@ -313,9 +313,14 @@ grid()
 ## Identify NAPS peaks
 
 ```{r}
+## loading info from NAPS 
 naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal")
-naps_info$mz_pos <- mass2mz(naps_info$`exact mass`, "[M+H]+")[,1]
-naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, "[M-H]-")[,1]
+
+naps_info$theo_mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[,1]
+naps_info$theo_mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M-H]-")[,1]
+naps_info <- data.frame(naps_info)
+
+rownames(naps_info) <- naps_info$Name
 
 ## Perform correspondence in NAPS pos and neg 
 pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_pos)),
@@ -330,24 +335,33 @@ pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_neg)),
                           bw = 2)
 naps_neg <- groupChromPeaks(naps_neg, param = pdp)
 
-mtch <- matchValues(featureDefinitions(naps_pos)[, c("rtmed","mzmed")], naps_info, 
+mtch <- matchValues(featureDefinitions(naps_pos)[, c("rtmed","mzmed")],
+                    naps_info, 
                     MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "mz_pos"))
+                    mzColname = c("mzmed", "theo_mz_pos"))
 mtch <- mtch[whichQuery(mtch)]
 mtch
 naps_res_pos <- matchedData(mtch) |> data.frame()
+ 
+## rt should be increasing. 
 naps_res_pos <- naps_res_pos[diff(naps_res_pos$rtmed) > 0,]
 
+naps_info[naps_res_pos$target_Name, "rt_pos"]<- naps_res_pos$rtmed
+naps_info[naps_res_pos$target_Name, "exp_mz_pos"]<- naps_res_pos$mzmed
+
 ## then do the same in NEG 
-mtch <- matchValues(featureDefinitions(naps_neg)[, c("rtmed","mzmed")], naps_info, 
+mtch <- matchValues(featureDefinitions(naps_neg)[, c("rtmed","mzmed")],
+                    naps_info, 
                     MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "mz_neg"))
+                    mzColname = c("mzmed", "theo_mz_neg"))
 mtch <- mtch[whichQuery(mtch)]
-mtch
 naps_res_neg <- matchedData(mtch) |> data.frame()
 naps_res_neg <- naps_res_neg[diff(naps_res_neg$rtmed) > 0,]
 
-##Later on can export this as a table i guess. let's see. 
+naps_info[naps_res_neg$target_Name, "rt_neg"]<- naps_res_neg$rtmed
+naps_info[naps_res_neg$target_Name, "exp_mz_neg"]<- naps_res_neg$mzmed
+
+write.csv(naps_info, "res/", lab,"/HE_naps.csv")
 ```
 
 # Save results
