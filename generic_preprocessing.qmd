@@ -10,9 +10,9 @@ This document provides a *generic preprocessing pipeline* using the HMGU
 reference method for both positive and negative modes.
 
 > To use this: change the `lab` variable below to point to your dataset folder,
-> and ensure the file paths conform to the expected structure.
-> Check the comments through the document for more details and to see what needs
-to be adapted to your dataset. 
+> and ensure the file paths conform to the expected structure. Check the
+> comments through the document for more details and to see what needs to be
+> adapted to your dataset.
 
 ## Load Required Packages
 
@@ -291,7 +291,7 @@ chromPeakData(mse_neg)$merged |>
                       table()
 ```
 
-# Retention time correction using NAPS 
+# Retention time correction using NAPS
 
 ```{r}
 sg <- factor(sampleData(mse)$Sample.Name, levels = c("NAPS"))
@@ -310,7 +310,7 @@ plotAdjustedRtime(mse, peakGroupsPch = 1)
 grid()
 ```
 
-## Identify NAPS peaks 
+## Identify NAPS peaks
 
 ```{r}
 naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal")
@@ -354,6 +354,10 @@ naps_res_neg <- naps_res_neg[diff(naps_res_neg$rtmed) > 0,]
 
 ```{r}
 ## export object needed for library building
+mse <- mse[sampleData(mse)$sample_type == "sample"]
+mse_pos <- mse[sampleData(mse)$polarity == "pos"]
+mse_neg <- mse[sampleData(mse)$polarity == "neg"]
+
 saveMsObject(mse,
              AlabasterParam(path = file.path("res/", lab, "/objects/mse")))
 saveMsObject(mse_pos,
@@ -361,4 +365,3 @@ saveMsObject(mse_pos,
 saveMsObject(mse_neg,
              AlabasterParam(path = file.path("res/", lab, "/objects/mse_neg")))
 ```
-

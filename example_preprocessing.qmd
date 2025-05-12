@@ -8,12 +8,12 @@ editor: visual
 
 -   Workflow: HMGU Reference Method (pos and neg)
 
-This file is here to exemplify the preprocessing steps. To show what we are 
-looking for when looking at raw and processed data. A file with the generic 
+This file is here to exemplify the preprocessing steps. To show what we are
+looking for when looking at raw and processed data. A file with the generic
 worklow is called "generic_preprocessing.qmd" and is available. Please use this
 and adapt it to your needs.
 
-Ideally the output should be the same. 
+Ideally the output should be the same.
 
 ## Load Required Packages
 
@@ -79,7 +79,7 @@ if (.Platform$OS.type == "unix") {
 }
 ```
 
-## Overview and Quality 
+## Overview and Quality
 
 Separate pos and neg for the overview below:
 
@@ -88,10 +88,9 @@ mse_pos <- mse[sampleData(mse)$polarity == "pos"]
 mse_neg <- mse[sampleData(mse)$polarity == "neg"]
 ```
 
-
 Suggestion to extract the BPC of all samples and plot them, all in one.
 
-```{r, eval=FALSE}
+```{r}
 #| fig-height: 8
 #| fig-width: 6
 col_sample_type <- brewer.pal(
@@ -135,7 +134,6 @@ Observations:
     would expect, since this should represent the signal from the spiked
     (added) standard.
 
-
 ```{r}
 #' Range
 range(rtime(mse_pos))
@@ -165,6 +163,7 @@ Comments: Nothing alarming. Similar-ish number of spectra.
 ```{r}
 sp_meta <- split(meta_pos, meta_pos$filname)
 x_meta <- sp_meta[[1]]
+idx_sample_pos <- which(sampleData(mse_pos)$sample_type == "sample")
 x_mse <- mse_pos[idx_sample_pos][1]
 ```
 
@@ -173,7 +172,7 @@ x_mse <- mse_pos[idx_sample_pos][1]
 Using theoretical m/z for both main positive adducts and all along the
 retention time.
 
-```{r, eval=FALSE}
+```{r}
 #| code-fold: true
 #| code-summary: "Show the code"
 
@@ -221,7 +220,7 @@ lab.
 
 First quickly checking a few peaks to look for peak width:
 
-```{r, eval=FALSE}
+```{r}
 plot(eicsMH["CHEBI:15611-[M+Na]+"], xlim = c(0, 30)) # 6secs
 plot(eicsMH["CHEBI:16856-[M+H]+"], xlim = c(10, 50)) # 10s 
 plot(eicsMH["CHEBI:15699-[M+H]+"], xlim = c(20, 40)) #7s 
@@ -233,7 +232,7 @@ implemented. The intensity are super low for some standard however.
 
 For ppm deviation:
 
-```{r, eval=FALSE}
+```{r}
 mz <- mz(eicsMH["CHEBI:15699-[M+H]+"]) |> as.vector()
 cst <- x_mse |>
     spectra() |>
@@ -251,7 +250,7 @@ x_mse |>
 lengths(cst)
 ```
 
-```{r, eval=FALSE}
+```{r}
 #' Calculate the difference in m/z values between scans
 mz_diff <- cst |>
     mz() |>
@@ -301,10 +300,11 @@ Some comments:
 
 We saw above that there does not seem to be a big shift in retention time
 between the samples. We will nonetheless align the samples using the NAPS
-samples.
+samples. Considering them as a repetiting samples that should represent
+potential rt shift during the injection runtime.
 
 ```{r}
-## Correspondence in POS mode using NAPS peaks only ? 
+## Correspondence - for alignment
 sg <- factor(sampleData(mse)$Sample.Name, levels = c("NAPS"))
 pdp <- PeakDensityParam(sampleGroups = sg,
                           minFraction = 1,
@@ -344,9 +344,11 @@ grid()
 naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal")
 
 ## calculate m/z 
-naps_info$mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[,1]
-naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M-H]-")[,1]
+naps_info$theo_mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[,1]
+naps_info$theo_mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M-H]-")[,1]
 naps_info <- data.frame(naps_info)
+
+rownames(naps_info) <- naps_info$Name
 
 ## Perform correspondence in NAPS pos and neg 
 pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_pos)),
@@ -361,9 +363,10 @@ pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_neg)),
                           bw = 2)
 naps_neg <- groupChromPeaks(naps_neg, param = pdp)
 
-mtch <- matchValues(featureDefinitions(naps_pos)[, c("rtmed","mzmed")], naps_info, 
+mtch <- matchValues(featureDefinitions(naps_pos)[, c("rtmed","mzmed")],
+                    naps_info, 
                     MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "mz_pos"))
+                    mzColname = c("mzmed", "theo_mz_pos"))
 mtch <- mtch[whichQuery(mtch)]
 mtch
 naps_res_pos <- matchedData(mtch) |> data.frame()
@@ -371,23 +374,32 @@ naps_res_pos <- matchedData(mtch) |> data.frame()
 ## rt should be increasing. 
 naps_res_pos <- naps_res_pos[diff(naps_res_pos$rtmed) > 0,]
 
-## then do the same in NEG 
+naps_info[naps_res_pos$target_Name, "rt_pos"]<- naps_res_pos$rtmed
+naps_info[naps_res_pos$target_Name, "exp_mz_pos"]<- naps_res_pos$mzmed
 
-mtch <- matchValues(featureDefinitions(naps_neg)[, c("rtmed","mzmed")], naps_info, 
+## then do the same in NEG 
+mtch <- matchValues(featureDefinitions(naps_neg)[, c("rtmed","mzmed")],
+                    naps_info, 
                     MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "mz_neg"))
+                    mzColname = c("mzmed", "theo_mz_neg"))
 mtch <- mtch[whichQuery(mtch)]
-mtch
 naps_res_neg <- matchedData(mtch) |> data.frame()
 naps_res_neg <- naps_res_neg[diff(naps_res_neg$rtmed) > 0,]
 
-## well not sure what to do with that but we have it at least. 
+naps_info[naps_res_neg$target_Name, "rt_neg"]<- naps_res_neg$rtmed
+naps_info[naps_res_neg$target_Name, "exp_mz_neg"]<- naps_res_neg$mzmed
+
+write.csv(naps_info, "res/hmgu/HE_naps.csv")
+
 ```
 
 ## export object for library building
 
 ```{r}
 ## export object needed for library building
+mse <- mse[sampleData(mse)$sample_type == "sample"]
+mse_pos <- mse[sampleData(mse)$sample_type == "sample"]
+mse_neg <- mse[sampleData(mse)$sample_type == "sample"]
 saveMsObject(mse,
              AlabasterParam(path = file.path("res/", lab, "/objects/mse")))
 saveMsObject(mse_pos,
