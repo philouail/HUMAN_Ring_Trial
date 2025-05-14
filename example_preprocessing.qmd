@@ -398,7 +398,6 @@ md <- matchedData(naps_neg_match, c("mz", "rt", "maxo", "sample",
     as.data.frame()
 
 neg_rt_matrix <- naps_rt_matrix(md, naps_info)
-    matchedData(naps_neg_match, c("rt", "maxo", "sample", "target_Name")),
 ```
 
 We next combine the retention time matrices for positive and negative polarity.
@@ -421,11 +420,40 @@ pgp <- PeakGroupsParam(
     subsetAdjust = "average",
     peakGroupsMatrix = rt_matrix)
 mse_adj <- adjustRtime(mse, param = pgp)
+
+mse1 <- filterMsLevel(mse, 1L)
+pgp <- PeakGroupsParam(
+    minFraction = 0.75,
+    extraPeaks = 50,
+    span = 0.5,
+    subset = which(sampleData(mse)$sample_type == "NAPS"),
+    subsetAdjust = "average",
+    peakGroupsMatrix = rt_matrix)
+mse1_adj <- adjustRtime(mse1, param = pgp)
+
+plotAdjustedRtime(mse1_adj)
+
+
 ```
+
+```{r}
+#' Try to understand what's happening in xcms... and where the scattering comes from...
+rtime <- split(rtime(mse, adjusted = FALSE), spectraSampleIndex(mse))
+peakGroupsMatrix <- rt_matrix
+smooth <- "loess"
+span <- 0.5
+family <- "gaussian"
+subset <- which(sampleData(mse)$sample_type == "NAPS")
+subsetAdjust <- "average"
+
+```
+
 
 ```{r}
 plotAdjustedRtime(
     mse_adj, col = paste0(col_sample_type[sampleData(mse_adj)$sample_type], 60))
+
+plotAdjustedRtime(filterMsLevel(mse_adj, 1L))
 ```
 
 WHY don't we have smooth lines???
