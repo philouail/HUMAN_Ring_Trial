@@ -51,14 +51,10 @@ meta$theo_logP <- logP
 
 # load 
 mse <- readMsObject(XcmsExperiment(), 
-                  AlabasterParam(path = file.path("res/hmgu/objects/mse")))
-mse_pos <- readMsObject(XcmsExperiment(), 
-                  AlabasterParam(path = file.path("res/hmgu/objects/mse_pos")), 
+                  AlabasterParam(path = file.path("res/hmgu/objects/mse")), 
                   spectraPath = file.path("data/hmgu/HE_mzml/"))
 
-mse_neg <- readMsObject(XcmsExperiment(),
-                  AlabasterParam(path = file.path("res/hmgu/objects/mse_neg")), 
-                  spectraPath = file.path("data/hmgu/HE_mzml/"))
+sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 ```
 
 # Library building
@@ -82,8 +78,8 @@ following:
         -   report similarity of isotope pattern against theoretical one.
         -   identify number of adduct ions present.
 -   for each standard: group chromatographic peaks (between the different
-    adducts) along retention time to identify retention time regions with
-    signal of the ions.
+    adducts) along retention time to identify retention time regions with signal
+    of the ions.
 -   for each of these regions: (per region or RT,...)
     -   count number of chrom peaks/adducts.
     -   ratio between total and matched number of MS2 spectra.
@@ -95,16 +91,16 @@ can use to make a decision.
 
 What information could be used to make an educated guess:
 
--   low evidence: isotope pattern matching - would be just confirmation that
-    the chemical formula is the expected one, so *only* confirming the match
-    based on the m/z.
--   low confidence: signal from multiple ions of the compound - but this can
-    not be generalized across compounds as it depends on a variety of factors.
+-   low evidence: isotope pattern matching - would be just confirmation that the
+    chemical formula is the expected one, so *only* confirming the match based
+    on the m/z.
+-   low confidence: signal from multiple ions of the compound - but this can not
+    be generalized across compounds as it depends on a variety of factors.
     -   Also to get as much data as possible, need to check the pos and neg
         adducts together.
 -   highest confidence: (multiple) MS2 spectra match reference. But even if
-    there is no match we can't be sure that it is not the compound. The
-    compound might be missing in the reference database.
+    there is no match we can't be sure that it is not the compound. The compound
+    might be missing in the reference database.
 -   log-p NAPS
     -   closest peak and its logp
 
@@ -162,50 +158,39 @@ digraph compound_analysis {
 ")
 ```
 
-When performing this automatically the object will be split so we can evaluate
-mixture by mixture. To describe the process in this file we will show do it for
-one mixture.
-
-```{r}
-# subset
-sp_meta <- split(meta, meta$filname)
-x_meta <- sp_meta[[1]]
-x_mse_pos <- mse_pos[1]
-x_mse_neg <- mse_neg[1]
-```
-
-We use below functionality from the *MetaboAnnotation* package to
-match/annotate the identified chromatographic peaks against the expected target
-compounds.
+We use below functionality from the *MetaboAnnotation* package to match/annotate
+the identified chromatographic peaks against the expected target compounds.
 
 ## Identify chrom peaks matching ions/adducts of the standards
 
-```{r}
-#' x_mse_pos XcmsExperiment
-#' x_meta data.frame with the standards expected to be present
+For chrompeak matching i can do it in a loop per mixture and then run the rest 
+on the whole res object. FOr the example i will not set up t he loop and we
+only look into mixture 1.1
 
-#' 1) match chrom peaks to possible ions
-cpks <- as.data.frame(chromPeaks(x_mse_pos))
+```{r}
+#mix number
+x <- unique(meta$Mixture)[1]
+# subset
+x_meta <- split(meta, meta$Mixture)[[x]]
+x_mse <- mse[sampleData(mse)$mixture == unique(x_meta$Mixture)]
+
+cpks <- as.data.frame(chromPeaks(x_mse))
 cpks$chrom_peak_id <- rownames(cpks)
 
-adds <- c("[M+H]+", "[M+Na]+") ## easily scalable/adaptable 
-match_pos <- matchValues(cpks, x_meta,
+#pos
+adds <- c("[M+H]+", "[M+Na]+")
+match_pos <- matchValues(cpks[cpks$sample == 1,], x_meta,
                        Mass2MzParam(adds, tolerance = 0.05, ppm = 10), 
                        mzColname = "mz", massColname = "M")
 match_pos <- match_pos[whichQuery(match_pos)]
 
-adds <- c("[M-H]-", "[M+CHO2]-" ) ## the second one is "[M+FA-H]-", 
-##i have duplication here.. and it screws up the MS1 extraction :/ for now i reduced the tolerance
-## we need to discuss what to do in these cases bc it will happen again even with low tolerance i guess.. 
-cpks <- as.data.frame(chromPeaks(x_mse_neg))
-cpks$chrom_peak_id <- rownames(cpks)
-match_neg <- matchValues(cpks, x_meta,
+#neg
+adds <- c("[M-H]-", "[M+CHO2]-") 
+match_neg <- matchValues(cpks[cpks$sample == 2,], x_meta,
                             Mass2MzParam(adds, tolerance = 0, ppm = 10), 
                             mzColname = "mz", massColname = "M")
+#once chrompeakspectra bug is fixed, increase the tolerance again
 match_neg <- match_neg[whichQuery(match_neg)]
-
-# so, one idea to deal with peaks that match multiple compound would be to only
-# keep the highest score ? 
 ```
 
 We next extract and further process/expand the result data frame.
@@ -213,19 +198,25 @@ We next extract and further process/expand the result data frame.
 ```{r}
 #' Extract the matching result.
 match_res_pos <- matchedData(
-    match_pos, c("chrom_peak_id","mz", "rt", "rtmin", "rtmax", "into", "target_ChEBI name",
+    match_pos, c("chrom_peak_id","sample", "mz", "rt", "rtmin", "rtmax",
+                 "into", "target_ChEBI name",
                "target_ChEBI", "target_InChIKey", "target_formula", "target_M",
-               "adduct", "score", "ppm_error", "target_theo_logP")) |> as.data.frame()
-
+               "adduct", "score", "ppm_error", "target_theo_logP")) |> 
+  as.data.frame() ## add NAPS before and after info, idk if possible ?
 match_res_pos$polarity <- "pos"
 
 match_res_neg <- matchedData(
-    match_neg, c("chrom_peak_id","mz", "rt", "rtmin", "rtmax", "into", "target_ChEBI name",
+    match_neg, c("chrom_peak_id","sample","mz", "rt", "rtmin", "rtmax", "into", 
+                 "target_ChEBI name",
                "target_ChEBI", "target_InChIKey", "target_formula", "target_M",
-               "adduct", "score", "ppm_error", "target_theo_logP")) |> as.data.frame()
+               "adduct", "score", "ppm_error", "target_theo_logP")) |> 
+  as.data.frame()
 match_res_neg$polarity <- "neg"
+
 #' Combine the results
 match_res <- rbind(match_res_pos, match_res_neg)
+match_res$mixture <- sampleData(x_mse)$mixture
+
 #' Add the m/z of the adduct
 match_res$adduct_mz <- mapply(match_res$target_M, match_res$adduct,
                                 FUN = mass2mz)
@@ -249,12 +240,9 @@ First process the MS1 data:
 ```{r}
 match_ms1 <- chromPeakSpectra(
     mse, msLevel = 1L, peaks = match_res$chrom_peak_id,
-    method = "closest_rt")  ## this function fails if duplicated peaks. i need to do a example.
+    method = "closest_rt") 
 match_ms1$exactmass <- match_res$target_M
 match_ms1$adduct_mz <- match_res$adduct_mz
-
-## the polarity should be there no ? YES 1 - pos and 0 - neg
-spectraData(match_ms1)
 
 match_ms1 <- setBackend(backend = MsBackendMemory(), object = match_ms1)
 
@@ -284,12 +272,12 @@ match_res$ms1_adduct_05_count <- spectrapply(
     }) |> unlist()
 ```
 
-We plot these to file. An example plot is shown below. - will deal with
-plotting later.
+We plot these to file. An example plot is shown below. - will deal with plotting
+later.
 
 ```{r}
 #' Plot example
-a <- match_ms1_adducts[1]
+    a <- match_ms1_adducts[1]
 cmp <- match_res[a$chrom_peak_id, "target_ChEBI"]
 adct <- match_res[a$chrom_peak_id, "adduct"]
 
@@ -304,7 +292,8 @@ grid()
 
 
 #' Plot all
-dr <- file.path("res", "example", "ms1_adducts_plot")
+dr <- file.path("res", "example", "ms1_adducts_plot") # i would actually then 
+##organise hte plots per mixtures
 dir.create(dr, recursive = TRUE, showWarnings = FALSE)
 for (i in seq_along(match_ms1_adducts)) {
     a <- match_ms1_adducts[i]
@@ -330,8 +319,8 @@ intensity and hence potentially higher chance of being detected (as a
 chromatographic peak) and fragmented.
 
 We next validate for each of the identified/assigned chromatographic peaks
-whether the measured isotope pattern matches the theoretical isotope pattern
-for the ion (its chemical formula).
+whether the measured isotope pattern matches the theoretical isotope pattern for
+the ion (its chemical formula).
 
 ```{r}
 library(enviPat)
@@ -376,12 +365,12 @@ match_res$isopeak_sim <- diag(
 
 ```
 
-We next calculate the similarity between the *measured* isotope peak pattern
-for each chromatographic peak and the theoretical isotope pattern calculated
-based on the adduct formula. We could eventually use a different similarity
+We next calculate the similarity between the *measured* isotope peak pattern for
+each chromatographic peak and the theoretical isotope pattern calculated based
+on the adduct formula. We could eventually use a different similarity
 calculation method that puts more weight/importance on the similarity of the
-isotope peak's intensity. In addition we create mirror plots for all pairs -
-one example is shown below.
+isotope peak's intensity. In addition we create mirror plots for all pairs - one
+example is shown below.
 
 ```{r}
 plotSpectraMirror(match_ms1_isopeaks[4],
@@ -410,8 +399,8 @@ for (i in seq_along(match_ms1_isopeaks)) {
 }
 ```
 
-**Isotopes**: comparing the observed against the theoretical isotope pattern
-for a chrom peak (or feature) to compound assignment could provide additional
+**Isotopes**: comparing the observed against the theoretical isotope pattern for
+a chrom peak (or feature) to compound assignment could provide additional
 evidence for the match. The isotope pattern would base exclusively by the
 chemical formula and could be easily calculated with the *enviPat* R package.
 Note however, that this would **not** help with isomers (i.e. different
@@ -431,8 +420,8 @@ fragment spectra for each chromatographic peak as we don't expect any
 additional/other ion being present close to the standard's tentative
 chromatographic peak.
 
--   Here need to also be able to handle when labs have separate runs for MS1
-    and MS2.
+-   Here need to also be able to handle when labs have separate runs for MS1 and
+    MS2.
 
 ```{r}
 ## load ms2 data.. need ot match peaks and all. align ?? 
@@ -451,7 +440,7 @@ cnts <- table(ms2peaks$chrom_peak_id)
 match_res[names(cnts), "ms2_count"] <- as.integer(cnts)
 
 ## clean ms2. 
-#' Remove low intensity peaks; this is 5% of max intensitity. too restrictive?
+#' Remove low intensity peaks; this is 5% of max intensity. too restrictive?
 low_int <- function(x, ...) {
     x > max(x, na.rm = TRUE) * 0.05
 }
@@ -595,24 +584,51 @@ for (i in seq_len(nrow(true))) {
 
 ## NAPS similarity
 
-should it be done by regions ? would make sense. nope b ecause polarity
+should it be done by regions ? would make sense. nope because polarity
 
 ```{r}
-naps_info <- read.csv("res/hmgu/HE_naps.csv")
-## i think using mclosest makes the most sense here. 
-## pos
-x <- match_res[match_res$polarity == "pos", c("rt", "mz")]
-table <- naps_info[, c("rt_pos", "exp_mz_pos")]
-naps_closest <- mclosest(x, table)
-match_res[ match_res$polarity == "pos","NAPS_closest"] <- naps_info$Name[naps_closest]
-match_res[ match_res$polarity == "pos","NAPS_closest_logp"] <- naps_info$logP[naps_closest]
+naps_res <- read.csv("res/hmgu/HE_naps.csv")
 
-## neg
-x <- match_res[match_res$polarity == "neg", c("rt", "mz")]
-table <- naps_info[, c("rt_neg", "exp_mz_neg")]
-naps_closest <- mclosest(x, table)
-match_res[ match_res$polarity == "neg","NAPS_closest"] <- naps_info$Name[naps_closest]
-match_res[ match_res$polarity == "neg","NAPS_closest_logp"] <- naps_info$logP[naps_closest]
+
+#' Compute and update RTI values in match_res for each polarity
+#'
+#' @param mixture ID of the mixture to process (e.g., "1.1")
+#' @param match_res data.frame from above
+#' @param mse XcmsExperiemnt object ## that's the thing that is a bit dumb.. 
+#' @param naps_res data.frame of NAPS results, from preprocessing
+#' @param polarities Character vector of polarities to process (default: c("pos", "neg"))
+#'
+#' @return Updated match_res with new "RTI" values per polarity
+update_match_res_with_rti <- function(mixture, match_res, mse, naps_res,
+                                      polarities = c("pos", "neg")) {
+  
+  compute_rti <- function(polarity, mixture, match_res, mse, naps_res) {
+    mix_rt <- match_res[match_res$mixture == mixture & match_res$polarity == polarity, "rt"]
+    idx <- sampleData(mse)$mixture == mixture & sampleData(mse)$polarity == polarity
+    
+    naps_before <- sampleData(mse)$NAPS_before[idx]
+    naps_after <- sampleData(mse)$NAPS_after[idx]
+    
+    testnaps <- naps_res[, c(naps_before, naps_after)]
+    av_naps <- rowMeans(testnaps, na.rm = TRUE)
+    
+    indexRtime(x = mix_rt, y = data.frame(rtime = av_naps, rindex = naps_res$RTI))
+  }
+  
+  for (pol in polarities) {
+    rti <- compute_rti(pol, mixture, match_res, mse, naps_res)
+    match_res[match_res$mixture == mixture & match_res$polarity == pol, "RTI"] <- rti
+  }
+  
+  return(match_res)
+}
+
+match_res <- update_match_res_with_rti(mixture = x, match_res, mse, naps_res,
+                                      polarities = c("pos", "neg"))
+
+## the NAs come form the fact that some compounds are eluting very early on, 
+## before the first NAPS and therefore not RTi can be calcualted. 
+
 ```
 
 ## RT grouping
@@ -681,13 +697,7 @@ split(x, x$rt_region) |>
         res$ms2_matched_count <- sum(z$ms2_matched_count, na.rm = TRUE)
         res$ms2_true_count <- sum(z$ms2_true_count, na.rm = TRUE)
         res$number_of_peaks <- nrow(z)
-        if (length(unique(z$NAPS_closest)) > 1) {
-            res$NAPS_closest <- paste(unique(z$NAPS_closest), collapse = "|")
-            res$NAPS_closest_logp <- paste(unique(z$NAPS_closest_logp), collapse = "|")
-        } else {
-            res$NAPS_closest <- unique(z$NAPS_closest)
-            res$NAPS_closest_logp <- unique(z$NAPS_closest_logp)
-        }
+        res$RTI <- paste(z$RTI, collapse = "|")
         res
     }) |>
     do.call(what = rbind) |>
@@ -717,13 +727,7 @@ for (std in unique(match_res$target_ChEBI.name)) {
             res$ms2_matched_count <- sum(z$ms2_matched_count, na.rm = TRUE)
             res$ms2_true_count <- sum(z$ms2_true_count, na.rm = TRUE)
             res$number_of_peaks <- nrow(z)
-            if (length(unique(z$NAPS_closest)) > 1) {
-                res$NAPS_closest <- paste(unique(z$NAPS_closest), collapse = "|")
-                res$NAPS_closest_logp <- paste(unique(z$NAPS_closest_logp), collapse = "|")
-            } else {
-                res$NAPS_closest <- unique(z$NAPS_closest)
-                res$NAPS_closest_logp <- unique(z$NAPS_closest_logp)
-            }
+            res$RTI <- paste(z$RTI, collapse = "|")
             res
         }) |>
         do.call(what = rbind) |>
@@ -803,10 +807,12 @@ lapply(split(res_all, res_all$target_ChEBI.name), function(x) {
 
 Next to implement:
 
-- Info about compounds that were not detected ? 
-- When looking at the eics, the peakpicking does not seem that good.. some 
-  peaks are cut. Probably need to improve preprocessing?
+-   Info about compounds that were not detected ?
+
+-   When looking at the eics, the peakpicking does not seem that good.. some
+    peaks are cut. Probably need to improve preprocessing?
 
 -   peak shape correlation score between peaks of same regions. This is were we
     test the peak shape correlation that Anna tested using artificial data.
+
     -   Do this later on ?

@@ -1,33 +1,55 @@
 # HUMAN_Ring_Trial
 
-This repo is to group the analysis of the Ring trial study which is part of the
-HUMAN doctoral network main studies.
+This repository contains the analysis for the **Ring Trial study**, which is
+part of the HUMAN Doctoral Network's main research efforts.
 
+## Study Overview
 
-The study is defined as such: 
+The goal of the study is to better understand the sources of variability between
+different LC-MS setups used in metabolomics. Specifically, we compare multiple
+LC-MS methods across various laboratories:
 
-Within HUMAN, we would like to understand better where the differences between
-different LC-MS setups used for metabolomics come from. Therefore, different
-setups are compared using different methods. First, each participating
-laboratory uses a specific method in “daily” laboratory business. Second, a
-standardized method using the same column and gradient is used. Therefore, a
-total of 83 mixtures will be analyzed twice: by a “HUMAN reference method” and
-by a lab specific method.  In the first step for comparison of the methods and
-laboratories, mixtures obtained from the MetaSci metabolite standard library are
-measured. Since the ground truth (number and identity of metabolite) is known,
-we can compare the different chromatographic methods within a laboratory and
-compare the different LC-MS setups from different laboratories using the
-standardized method.
+1.  **Lab-Specific Method**: Each participating lab analyzes mixtures using
+    their own standard, everyday LC-MS protocol.
+2.  **HUMAN Reference Method**: All labs also analyze the same mixtures using a
+    standardized method, with a common column and gradient.
 
-The first step of this would be to automatise the library building as much as 
-possible. 
+### Experimental Design
 
-each lab will have their own preprocessing files which will output a certain 
-number of 
-object used in the library building. 
+-   A total of **83 mixtures** from the MetaSci metabolite standard library will
+    be analyzed by each lab.
+-   Each mixture is measured **twice**:
+    -   Once using the **lab-specific method**
+    -   Once using the **HUMAN reference method**
 
-The library file however will be common to all. and will generate 2 csv files
-as well as a number of plot to help in library building
-and making informed choice in case of ambiguity. 
+Because the ground truth (i.e., the identity and number of metabolites) is
+known, we can: - Compare chromatographic methods **within** each lab - Compare
+LC-MS setups **between** labs using the standardized method
 
+## Data analysis worflow
 
+The first phase focuses on **automating the library-building process** as much
+as possible.
+
+### Preprocessing
+
+-   Each lab will have their own **preprocessing scripts**.
+-   These scripts generate intermediate objects required for library
+    construction.
+-   While preprocessing files are quite similar across labs, **they must be run
+    step by step**, as intermediate outputs will help determine necessary
+    parameters for the library.
+
+### Library Building
+
+-   The **library-building scripts are shared and common** across all labs.
+-   They take the preprocessed objects as input and produce:
+    -   **Two final CSV files**
+    -   **Several diagnostic plots** to support decision-making and resolve
+        ambiguities in metabolite identification.
+
+> ⚠️ **Note:** The intermediate outputs from the library-building scripts are
+> not intended for direct use or inspection. Only the **final CSVs and plots**
+> are relevant for library review and finalization.
+
+## 

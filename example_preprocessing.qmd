@@ -33,26 +33,26 @@ library(MetaboAnnotation)
 ```
 
 In case one or more of the above libraries are not available (and hence fail to
-load), they can be installed with the R command `BiocManager::install()`
-(e.g. `BiocManager::install("alabaster.base")` to install the *alabaster.base* R
+load), they can be installed with the R command `BiocManager::install()` (e.g.
+`BiocManager::install("alabaster.base")` to install the *alabaster.base* R
 package). Note that this requires the installation of the *BiocManager* R
 package (which can be installed with `install.packages("BiocManager")`).
 
 ## Load metadata and raw files
 
-```{r}
+```{r, lab-setup}
 lab <- "hmgu"
 ```
 
-```{r, warning=FALSE, message=FALSE}
+```{r load-std-meta, warning=FALSE, message=FALSE}
 #' Load compound metadata (sheet 2);
-meta_pos <- read_xlsx(paste0("data/", lab, "/RefMethod_HE.xlsx"), sheet = 2L, 
+meta <- read_xlsx(paste0("data/", lab, "/RefMethod_HE.xlsx"), sheet = 2L, 
                       col_names = TRUE, skip = 1, .name_repair = "minimal") |>
     as.data.frame(check.names = FALSE)
-files_name <- unique(meta_pos$filname)
+files_name <- unique(meta$filname)
 ```
 
-```{r, warning=FALSE, message=FALSE}
+```{r load-lcms-data, warning=FALSE, message=FALSE}
 # Load pos data
 seq_pos <- read_xlsx(paste0("data/", lab, "/HE_pos_mzml/seq.xlsx"), 
                  col_names = TRUE) |> as.data.frame()
@@ -76,7 +76,7 @@ your computer can handle (mine has 4 so I use 2 or 3 for data analysis)
 This number will then be the same as the one oyu input in the `chunkSize =`
 parameter in the preprocessing steps.
 
-```{r}
+```{r parallel-setup}
 #' Set up parallel processing using 2 cores
 if (.Platform$OS.type == "unix") {
     register(MulticoreParam(2))
@@ -96,7 +96,7 @@ mse_neg <- mse[sampleData(mse)$polarity == "neg"]
 
 Suggestion to extract the BPC of all samples and plot them, all in one.
 
-```{r}
+```{r bpc-plots}
 #| fig-height: 8
 #| fig-width: 6
 col_sample_type <- brewer.pal(
@@ -105,7 +105,6 @@ names(col_sample_type)[seq_along(unique(sampleData(mse_pos)$sample_type))] <-
     unique(sampleData(mse_pos)$sample_type)
 bpc_pos <- chromatogram(mse_pos, aggregationFun = "max")
 bpc_neg <- chromatogram(mse_neg, aggregationFun = "max")
-bpc <- chromatogram(mse, aggregationFun = "max", chromPeaks = "none")
 
 xl <- range(unlist(lapply(bpc_pos, rtime)), unlist(lapply(bpc_neg, rtime)))
 yl <- max(unlist(lapply(bpc_pos, intensity)),
@@ -141,7 +140,7 @@ Observations:
     would expect, since this should represent the signal from the spiked
     (added) standard.
 
-```{r}
+```{r sanity-check}
 #' Range
 range(rtime(mse_pos))
 range(rtime(mse_neg))
@@ -167,8 +166,8 @@ Comments: Nothing alarming. Similar-ish number of spectra.
 
 # Estimate peak-picking parameters on ONE file.
 
-```{r}
-sp_meta <- split(meta_pos, meta_pos$filname)
+```{r sep-data}
+sp_meta <- split(meta, meta$filname)
 x_meta <- sp_meta[[1]]
 idx_sample_pos <- which(sampleData(mse_pos)$sample_type == "sample")
 x_mse <- mse_pos[idx_sample_pos][1]
@@ -179,7 +178,7 @@ x_mse <- mse_pos[idx_sample_pos][1]
 Using theoretical m/z for both main positive adducts and all along the
 retention time.
 
-```{r}
+```{r eic-ex}
 #| code-fold: true
 #| code-summary: "Show the code"
 
@@ -227,7 +226,7 @@ lab.
 
 First quickly checking a few peaks to look for peak width:
 
-```{r}
+```{r pw-est}
 plot(eicsMH["CHEBI:15611-[M+Na]+"], xlim = c(0, 30)) # 6secs
 plot(eicsMH["CHEBI:16856-[M+H]+"], xlim = c(10, 50)) # 10s 
 plot(eicsMH["CHEBI:15699-[M+H]+"], xlim = c(20, 40)) #7s 
@@ -239,7 +238,7 @@ implemented. The intensity are super low for some standard however.
 
 For ppm deviation:
 
-```{r}
+```{r ppm-est}
 mz <- mz(eicsMH["CHEBI:15699-[M+H]+"]) |> as.vector()
 cst <- x_mse |>
     spectra() |>
@@ -257,7 +256,7 @@ x_mse |>
 lengths(cst)
 ```
 
-```{r}
+```{r ppm-est-2}
 #' Calculate the difference in m/z values between scans
 mz_diff <- cst |>
     mz() |>
@@ -279,7 +278,7 @@ Comment:
     data set later.
 -   We run it on the full dataset. We will separate the mixture later on.
 
-```{r}
+```{r peak-picking}
 cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
                      snthresh = 7, noise = 100) 
 
@@ -292,38 +291,31 @@ mse <- refineChromPeaks(mse, mnpp, chunkSize = 2L)
 
 Some comments:
 
--   I am struggling with the noise settings. Pauline tells me she had it set up
-    at 500 on mzmine. but with 500 i get only 55% of the standard detected. and
-    she gets much more.
--   This also mean the technique is maybe not the best (we prob should NOT have
-    such low abundances.)
--   So either we go for NO noise threshold and then deal with things that are
-    just noise later on. or we accept we miss the low abundance peak and this
-    gives just a actually view of the analytical platform maybe not being great
-    for this (or samples were too diluted.)
+-   very low abundances I would therefore not goo for too high noise threshold. 
 
 # Alignment using NAPS
 
 We saw above that there does not seem to be a big shift in retention time
 between the samples. We will nonetheless align the samples using the NAPS
-samples. Considering them as a repetiting samples that should represent
+samples. Considering them as a repeating samples that should represent
 potential rt shift during the injection runtime.
 
 The NAPS-based alignment will use the retention times of the NAPS compounds to
-align the data sets (also positive and negative polarity) against each other. We
-thus identify (separately for each polarity) chromatographic peaks matching the
-m/z of NAPS adducts. If multiple chromatographic peaks are matched to a NAPS in
-one sample we select the peak with the highest intensity. Also, we require the
-retention times of the NAPS within one sample to be increasingly ordered.
+align the data sets (also positive and negative polarity) against each other.
+We thus identify (separately for each polarity) chromatographic peaks matching
+the m/z of NAPS adducts. If multiple chromatographic peaks are matched to a
+NAPS in one sample we select the peak with the highest intensity. Also, we
+require the retention times of the NAPS within one sample to be increasingly
+ordered.
 
-Note: this approach seemed to work well - but we might need to adapt it for data
-sets in which we e.g. can not identify chromatographic peaks for most NAPS or if
-their retention times are not increasingly ordered.
+Note: this approach seemed to work well - but we might need to adapt it for
+data sets in which we e.g. can not identify chromatographic peaks for most NAPS
+or if their retention times are not increasingly ordered.
 
 Below we load the NAPS information and perform the analysis for the positive
 polarity data.
 
-```{r}
+```{r naps-part1}
 #' loading info from NAPS 
 naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal") |>
     as.data.frame()
@@ -343,6 +335,8 @@ naps_pos_match <- naps_pos_match[whichQuery(naps_pos_match)]
 md <- matchedData(naps_pos_match, c("mz", "rt", "maxo", "sample",
                                     "ppm_error", "target_Name")) |>
     as.data.frame()
+
+library(MsCoreUtils)
 
 #' Helper function to extract a retention time matrix from the `matchedData`
 #' `data.frame`. The function simply iterates over the sample and extracts the
@@ -370,21 +364,25 @@ naps_rt_matrix <- function(x, naps_info) {
         rti <- do.call(
             rbind,
             lapply(rti, function(z) z[which.max(z$maxo), , drop = FALSE]))
-        if (is.unsorted(rti$rt))
-            stop("Retention times are not increasingly ordered for sample ", i)
+        if (is.unsorted(rti$rt)) {
+            warning("Retention times are not increasingly ordered for sample ",
+                    i) 
+            rti$rt <- force_sorted(rti$rt) # this can be improved.
+        }
         res[match(rownames(rti), rownames(res)), i] <- rti$rt
     }
     res
 }
 
 pos_rt_matrix <- naps_rt_matrix(md, naps_info)
+colnames(pos_rt_matrix) <- paste0("NAPS_POS_", seq_len(ncol(pos_rt_matrix)))
 ```
 
 We repeat for negative polarity.
 
-```{r}
+```{r naps-part2} 
 #' Define m/z for the expected ions of the NAPS
-naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M-H]-")[, 1]
+naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M+CHO2]-")[, 1]
 
 #' Negative polarity
 naps_neg <- mse[sampleData(mse)[, "Sample.Name"] == "NAPS" &
@@ -398,21 +396,65 @@ md <- matchedData(naps_neg_match, c("mz", "rt", "maxo", "sample",
     as.data.frame()
 
 neg_rt_matrix <- naps_rt_matrix(md, naps_info)
-    matchedData(naps_neg_match, c("rt", "maxo", "sample", "target_Name")),
+colnames(neg_rt_matrix) <- paste0("NAPS_NEG_", seq_len(ncol(neg_rt_matrix)))
+matchedData(naps_neg_match, c("rt", "maxo", "sample", "target_Name"))
 ```
 
 We next combine the retention time matrices for positive and negative polarity.
 
-```{r}
+```{r naps-combine}
 rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
+## export table 
+write.csv(
+    cbind(naps_info, rt_matrix),
+    file = file.path("res/", lab, "HE_naps.csv"),
+    row.names = TRUE
+)
 ```
 
-We use this retention time matrix for the alignment. Note that for `subsetAdjust
-= "average"` it is highly recommended that the first and last measurement for
-positive as well as for negative polarity are for NAPS samples. Also, the
-samples should be in the order they were measured.
+```{r rti-setup}
+## set up the sample data for future RTI
+get_closest_index <- function(x, idx, method = c("next", "previous",
+                                                  "closest")) {
+    method <- match.arg(method)
+    switch(method,
+           `next` = {
+               nxt <- idx > x
+               if (any(nxt))
+                   idx[nxt][1]
+               else idx[!nxt][sum(!nxt)]
+           },
+           `previous` = {
+               prv <- idx < x
+               if (any(prv))
+                   idx[prv][sum(prv)]
+               else idx[!prv][1]
+           },
+           closest = {
+               dst <- abs(idx - x)
+               idx[which.min(dst)]
+           })
+}
 
-```{r}
+idx <- which(sampleData(mse)$Sample.Name == "NAPS")
+idx_sample <- which(sampleData(mse)$sample_type == "sample")
+
+for (i in idx_sample) {
+    idx_naps_bef <- get_closest_index(i, idx, "previous")
+    sampleData(mse)[i, "NAPS_before"] <-
+        colnames(rt_matrix)[which(idx == idx_naps_bef)]
+    idx_naps_aft <- get_closest_index(i, idx, "next")
+    sampleData(mse)[i, "NAPS_after"] <-
+        colnames(rt_matrix)[which(idx == idx_naps_aft)]
+}
+```
+
+We use this retention time matrix for the alignment. Note that for
+`subsetAdjust = "average"` it is highly recommended that the first and last
+measurement for positive as well as for negative polarity are for NAPS samples.
+Also, the samples should be in the order they were measured.
+
+```{r align}
 pgp <- PeakGroupsParam(
     minFraction = 0.75,
     extraPeaks = 50,
@@ -420,150 +462,31 @@ pgp <- PeakGroupsParam(
     subset = which(sampleData(mse)$sample_type == "NAPS"),
     subsetAdjust = "average",
     peakGroupsMatrix = rt_matrix)
-mse_adj <- adjustRtime(mse, param = pgp)
-```
-
-```{r}
-plotAdjustedRtime(
-    mse_adj, col = paste0(col_sample_type[sampleData(mse_adj)$sample_type], 60))
-```
-
-WHY don't we have smooth lines???
-
-```{r}
-#' Ideally, we want to validate that alignment improved the data.
-
-bpc_adj <- chromatogram(mse_adj, aggregationFun = "max", chromPeaks = "none")
-
-bs <- floor(diff(range(rtime(mse))) / 50)
-bpc_b <- bin(bpc, binSize = bs)
-bpc_adj_b <- bin(bpc_adj, binSize = bs)
-
-#' Create a log2 transformed, column centered intensity matrix
-bpc_m <- lapply(bpc_b, intensity) |>
-    do.call(what = rbind) |>
-    log2() |>
-    scale(center = TRUE, scale = FALSE)
-colnames(bpc_m) <- rtime(bpc_b[1, 1])
-rownames(bpc_m) <- sampleData(mse)$Sample.Name
-
-#' Same for BPC after alignment
-bpc_adj_m <- lapply(bpc_adj_b, intensity) |>
-    do.call(what = rbind) |>
-    log2() |>
-    scale(center = TRUE, scale = FALSE)
-colnames(bpc_adj_m) <- rtime(bpc_adj_b[1, 1])
-rownames(bpc_adj_m) <- sampleData(mse)$Sample.Name
-```
-
-```{r}
-#' Plot the BPC heatmaps; no big difference can be seen.
-pheatmap(bpc_m, cluster_cols = FALSE)
-pheatmap(bpc_adj_m, cluster_cols = FALSE)
-```
-
-
-```{r}
-## Correspondence - for alignment
-sg <- factor(sampleData(mse)$Sample.Name, levels = c("NAPS"))
-pdp <- PeakDensityParam(sampleGroups = sg,
-                          minFraction = 1,
-                          binSize = 0.01, ppm = 10,
-                          bw = 2)
-mse <- groupChromPeaks(mse, param = pdp)
-
-#' Define parameters of choice
-subset <- which(sampleData(mse)$Sample.Name == "NAPS")
-pgp <- PeakGroupsParam(minFraction = 1, extraPeaks = 50, span = 0.5,
-                         subsetAdjust = "average",
-                         subset = subset)
-
-#' Perform the alignment
 mse <- adjustRtime(mse, param = pgp)
 
 
-mse_pos <- mse[sampleData(mse)$polarity == "pos"]
-naps_pos <- mse_pos[sampleData(mse_pos)$Sample.Name == "NAPS"]
-
-mse_neg <- mse[sampleData(mse)$polarity == "neg"]
-naps_neg <- mse_neg[sampleData(mse_neg)$Sample.Name == "NAPS"]
-```
-
-plot
-
-```{r}
-#' Visualize alignment results
-plotAdjustedRtime(mse, peakGroupsPch = 1)
-grid()
-```
-
-## identify NAPS peaks.
-
-```{r}
-## loading info from NAPS 
-naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal")
-
-## calculate m/z 
-naps_info$theo_mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[,1]
-naps_info$theo_mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M-H]-")[,1]
-naps_info <- data.frame(naps_info)
-
-rownames(naps_info) <- naps_info$Name
-
-## Perform correspondence in NAPS pos and neg 
-pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_pos)),
-                          minFraction = 1,
-                          binSize = 0.01, ppm = 10,
-                          bw = 2)
-naps_pos <- groupChromPeaks(naps_pos, param = pdp)
-
-pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_neg)),
-                          minFraction = 1,
-                          binSize = 0.01, ppm = 10,
-                          bw = 2)
-naps_neg <- groupChromPeaks(naps_neg, param = pdp)
-
-mtch <- matchValues(featureDefinitions(naps_pos)[, c("rtmed","mzmed")],
-                    naps_info, 
-                    MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "theo_mz_pos"))
-mtch <- mtch[whichQuery(mtch)]
-mtch
-naps_res_pos <- matchedData(mtch) |> data.frame()
-## comment: I cannot manage to get 20 peaks.. 
-## rt should be increasing. 
-naps_res_pos <- naps_res_pos[diff(naps_res_pos$rtmed) > 0,]
-
-naps_info[naps_res_pos$target_Name, "rt_pos"]<- naps_res_pos$rtmed
-naps_info[naps_res_pos$target_Name, "exp_mz_pos"]<- naps_res_pos$mzmed
-
-## then do the same in NEG 
-mtch <- matchValues(featureDefinitions(naps_neg)[, c("rtmed","mzmed")],
-                    naps_info, 
-                    MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "theo_mz_neg"))
-mtch <- mtch[whichQuery(mtch)]
-naps_res_neg <- matchedData(mtch) |> data.frame()
-naps_res_neg <- naps_res_neg[diff(naps_res_neg$rtmed) > 0,]
-
-naps_info[naps_res_neg$target_Name, "rt_neg"]<- naps_res_neg$rtmed
-naps_info[naps_res_neg$target_Name, "exp_mz_neg"]<- naps_res_neg$mzmed
-
-write.csv(naps_info, "res/hmgu/HE_naps.csv")
-
+plotAdjustedRtime(
+    mse, col = paste0(col_sample_type[sampleData(mse)$sample_type], 60))
 ```
 
 ## export object for library building
 
-```{r}
+```{r, export}
 ## export object needed for library building
+mse_pos <- mse[sampleData(mse)$polarity == "pos"]
+mse_neg <- mse[sampleData(mse)$polarity == "neg"]
+
 mse <- mse[sampleData(mse)$sample_type == "sample"]
 mse_pos <- mse[sampleData(mse)$sample_type == "sample"]
 mse_neg <- mse[sampleData(mse)$sample_type == "sample"]
+
 saveMsObject(mse,
-             AlabasterParam(path = file.path("res/", lab, "/objects/mse")))
+             AlabasterParam(path = file.path("res/",
+                                             lab, "/objects/mse")))
 saveMsObject(mse_pos,
-             AlabasterParam(path = file.path("res/", lab, "/objects/mse_pos")))
+             AlabasterParam(path = file.path("res/", 
+                                             lab, "/objects/mse_pos")))
 saveMsObject(mse_neg,
-             AlabasterParam(path = file.path("res/", lab, "/objects/mse_neg")))
+             AlabasterParam(path = file.path("res/", 
+                                             lab, "/objects/mse_neg")))
 ```
