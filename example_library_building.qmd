@@ -163,9 +163,9 @@ the identified chromatographic peaks against the expected target compounds.
 
 ## Identify chrom peaks matching ions/adducts of the standards
 
-For chrompeak matching i can do it in a loop per mixture and then run the rest 
-on the whole res object. FOr the example i will not set up t he loop and we
-only look into mixture 1.1
+For chrompeak matching we will later do it in a loop, mixture per mixture. 
+The rest of the library building is then run on the whole res object. 
+For the example i will not set up the loop and we only look into mixture "1.1".
 
 ```{r}
 #mix number
