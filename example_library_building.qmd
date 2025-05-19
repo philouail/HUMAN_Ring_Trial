@@ -272,8 +272,7 @@ match_res$ms1_adduct_05_count <- spectrapply(
     }) |> unlist()
 ```
 
-We plot these to file. An example plot is shown below. - will deal with plotting
-later.
+We plot these to file. An example plot is shown below.
 
 ```{r}
 #' Plot example
