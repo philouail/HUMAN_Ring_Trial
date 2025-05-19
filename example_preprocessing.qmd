@@ -278,7 +278,7 @@ Comment:
 
 -   I would run a rather inclusive peak detection. We could filter/restrict the
     data set later.
--   We run it on the full dataset. We will separate the mixture later on.
+-   We run it on the full dataset.
 
 ```{r peak-picking}
 cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
