@@ -461,13 +461,9 @@ Apply the same to the ref database.
 ```{r}
 library(RSQLite)
 library(MsBackendSql)
-dbfile <- "MsBackendSql.GNPS.matchms.cleaned.v1.sqlite"
+dbfile <- "data/MsBackendSql.GNPS.matchms.cleaned.v1.sqlite"
 con <- dbConnect(SQLite(), dbfile)
 ms2_ref <- Spectra(con, source = MsBackendSql())
-
-## szubset for expected compounds
-# idx <-  which(mb$inchikey %in% x_meta$InChIKey) for now no
-# ms2_ref <- mb[idx]
 ms2_ref <- ms2_ref[ms2_ref$polarity == 1]
 
 #' Same spectra processing as with the experimental data

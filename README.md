@@ -26,7 +26,7 @@ Because the ground truth (i.e., the identity and number of metabolites) is
 known, we can: - Compare chromatographic methods **within** each lab - Compare
 LC-MS setups **between** labs using the standardized method
 
-## Data analysis worflow
+## Project Structure
 
 The first phase focuses on **automating the library-building process** as much
 as possible.
@@ -51,5 +51,27 @@ as possible.
 > ⚠️ **Note:** The intermediate outputs from the library-building scripts are
 > not intended for direct use or inspection. Only the **final CSVs and plots**
 > are relevant for library review and finalization.
+
+## Example and Generic Files
+
+To support users in adapting the pipeline to their own data, we provide:
+
+-   **Example files**:
+
+    -   `example_preprocessing.qmd`: Step-by-step explanation of the
+        preprocessing procedure.
+    -   `example_library_building.qmd`: Step-by-step explanation of the
+        library-building process.
+
+    These are designed for clarity and learning.
+
+-   **Generic files**:
+
+    -   `generic_preprocessing.qmd`
+    -   `generic_library_building.qmd`
+
+    These are simplified versions that users can easily adapt to their own
+    datasets. They include the necessary logic but omit extensive inline
+    commentary and visualization.
 
 ## 

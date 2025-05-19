@@ -41,6 +41,8 @@ package (which can be installed with `install.packages("BiocManager")`).
 ## Load metadata and raw files
 
 ```{r, lab-setup}
+## Here input you lab folder name, this should be present in the "data" folder 
+## with the mzml files. and will be your results folder in the "res" folder. 
 lab <- "hmgu"
 ```
 
@@ -136,9 +138,9 @@ Observations:
 
 -   Naps seem to be measured in regular intervals (but with different
     intensities) between \~ 200 and 600 seconds.
--   some peaks seem to be sample file-specific - which is actually what we
-    would expect, since this should represent the signal from the spiked
-    (added) standard.
+-   some peaks seem to be sample file-specific - which is actually what we would
+    expect, since this should represent the signal from the spiked (added)
+    standard.
 
 ```{r sanity-check}
 #' Range
@@ -175,8 +177,8 @@ x_mse <- mse_pos[idx_sample_pos][1]
 
 ## Extract theoretical EICs
 
-Using theoretical m/z for both main positive adducts and all along the
-retention time.
+Using theoretical m/z for both main positive adducts and all along the retention
+time.
 
 ```{r eic-ex}
 #| code-fold: true
@@ -216,8 +218,8 @@ for (i in seq_along(eicsMH)) {
 
 We have `r length(theo_mz)` number of standard.
 
-After a quick check they seem pretty noisy, and they all have more than one
-very big peak.
+After a quick check they seem pretty noisy, and they all have more than one very
+big peak.
 
 ## Peak picking param set up
 
@@ -291,33 +293,32 @@ mse <- refineChromPeaks(mse, mnpp, chunkSize = 2L)
 
 Some comments:
 
--   very low abundances I would therefore not goo for too high noise threshold. 
+-   very low abundances I would therefore not goo for too high noise threshold.
 
 # Alignment using NAPS
 
 We saw above that there does not seem to be a big shift in retention time
 between the samples. We will nonetheless align the samples using the NAPS
-samples. Considering them as a repeating samples that should represent
-potential rt shift during the injection runtime.
+samples. Considering them as a repeating samples that should represent potential
+rt shift during the injection runtime.
 
 The NAPS-based alignment will use the retention times of the NAPS compounds to
-align the data sets (also positive and negative polarity) against each other.
-We thus identify (separately for each polarity) chromatographic peaks matching
-the m/z of NAPS adducts. If multiple chromatographic peaks are matched to a
-NAPS in one sample we select the peak with the highest intensity. Also, we
-require the retention times of the NAPS within one sample to be increasingly
-ordered.
+align the data sets (also positive and negative polarity) against each other. We
+thus identify (separately for each polarity) chromatographic peaks matching the
+m/z of NAPS adducts. If multiple chromatographic peaks are matched to a NAPS in
+one sample we select the peak with the highest intensity. Also, we require the
+retention times of the NAPS within one sample to be increasingly ordered.
 
-Note: this approach seemed to work well - but we might need to adapt it for
-data sets in which we e.g. can not identify chromatographic peaks for most NAPS
-or if their retention times are not increasingly ordered.
+Note: this approach seemed to work well - but we might need to adapt it for data
+sets in which we e.g. can not identify chromatographic peaks for most NAPS or if
+their retention times are not increasingly ordered.
 
 Below we load the NAPS information and perform the analysis for the positive
 polarity data.
 
 ```{r naps-part1}
 #' loading info from NAPS 
-naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal") |>
+naps_info <- read_xlsx("data/NAPS_info.xlsx", .name_repair = "minimal") |>
     as.data.frame()
 
 #' calculate m/z 
@@ -380,7 +381,7 @@ colnames(pos_rt_matrix) <- paste0("NAPS_POS_", seq_len(ncol(pos_rt_matrix)))
 
 We repeat for negative polarity.
 
-```{r naps-part2} 
+```{r naps-part2}
 #' Define m/z for the expected ions of the NAPS
 naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M+CHO2]-")[, 1]
 
