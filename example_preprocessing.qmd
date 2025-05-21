@@ -30,6 +30,9 @@ library(MsIO)
 library(RColorBrewer)
 library(MetaboCoreUtils)
 library(MetaboAnnotation)
+library(MsCoreUtils)
+
+source("code_files/setup.R")
 ```
 
 In case one or more of the above libraries are not available (and hence fail to
@@ -42,25 +45,24 @@ package (which can be installed with `install.packages("BiocManager")`).
 
 ```{r, lab-setup}
 ## Here input you lab folder name, this should be present in the "data" folder 
-## with the mzml files. and will be your results folder in the "res" folder. 
-lab <- "hmgu"
+## with the mzml files. and will be your results folder in the "results" folder.
+lab <- "example"
 ```
 
 ```{r load-std-meta, warning=FALSE, message=FALSE}
 #' Load compound metadata (sheet 2);
-meta <- read_xlsx(paste0("data/", lab, "/RefMethod_HE.xlsx"), sheet = 2L, 
+meta <- read_xlsx(paste0("data/standards.xlsx"), 
                       col_names = TRUE, skip = 1, .name_repair = "minimal") |>
     as.data.frame(check.names = FALSE)
-files_name <- unique(meta$filname)
 ```
 
 ```{r load-lcms-data, warning=FALSE, message=FALSE}
 # Load pos data
-seq_pos <- read_xlsx(paste0("data/", lab, "/HE_pos_mzml/seq.xlsx"), 
+seq_pos <- read_xlsx(paste0("data/", lab, "/HE_mzml/seq_pos.xlsx"), 
                  col_names = TRUE) |> as.data.frame()
 seq_pos$polarity <- "pos"
 # load neg data
-seq_neg <- read_xlsx(paste0("data/", lab, "/HE_neg_mzml/seq.xlsx"), 
+seq_neg <- read_xlsx(paste0("data/", lab, "/HE_mzml/seq_neg.xlsx"), 
                  col_names = TRUE) |> as.data.frame()
 seq_neg$polarity <- "neg"
 seq <- rbind(seq_pos, seq_neg)
@@ -169,8 +171,7 @@ Comments: Nothing alarming. Similar-ish number of spectra.
 # Estimate peak-picking parameters on ONE file.
 
 ```{r sep-data}
-sp_meta <- split(meta, meta$filname)
-x_meta <- sp_meta[[1]]
+x_meta <-  split(meta, meta$Mixture)[[1]]
 idx_sample_pos <- which(sampleData(mse_pos)$sample_type == "sample")
 x_mse <- mse_pos[idx_sample_pos][1]
 ```
@@ -185,7 +186,7 @@ time.
 #| code-summary: "Show the code"
 
 #' Calculate m/z from the exact mass
-theo_mz <- mass2mz(x_meta[, "M"], c("[M+H]+", "[M+Na]+")) |>
+theo_mz <- mass2mz(as.numeric(x_meta[, "M"]), c("[M+H]+", "[M+Na]+")) |>
     as.vector()
 #' Define the m/z range.
 theo_mzr <- cbind(mzmin = theo_mz - MsCoreUtils::ppm(theo_mz, 20),
@@ -282,7 +283,7 @@ Comment:
 
 ```{r peak-picking}
 cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
-                     snthresh = 7, noise = 100) 
+                     snthresh = 7, noise = 100, extendLengthMSW = TRUE) 
 
 mse <- findChromPeaks(mse, cwp, msLevel = 1L, chunkSize = 2L)
 
@@ -337,43 +338,6 @@ md <- matchedData(naps_pos_match, c("mz", "rt", "maxo", "sample",
                                     "ppm_error", "target_Name")) |>
     as.data.frame()
 
-library(MsCoreUtils)
-
-#' Helper function to extract a retention time matrix from the `matchedData`
-#' `data.frame`. The function simply iterates over the sample and extracts the
-#' retentio time for each chrom peak matching a NAPS. If multiple chrom peaks
-#' match a NAPS, the one with the highest intensity (`"maxo"`) is selected.
-#' The function throws an error if the extracted retention times in one sample
-#' are not ordered increasingly.
-#'
-#' @param x `data.frame` with at least columns `"rt"`, `"maxo"`, `"sample"`
-#'     and `"target_Name"`
-#'
-#' @param naps_info `data.frame` with NAPS information. Needs to have a column
-#'     `"Name"` with the name of the NAPS and with the data odered increasingly
-#'     by retention time.
-#' 
-#' @return `matrix` with retention times of the NAPS in the individual samples.
-#'     Columns are samples and rows NAPS.
-naps_rt_matrix <- function(x, naps_info) {
-    smpls <- unique(x[, "sample"])
-    res <- matrix(NA_real_, ncol = length(smpls), nrow = nrow(naps_info))
-    rownames(res) <- naps_info$Name
-    for (i in smpls) {
-        z <- x[x$sample == i, ]
-        rti <- split(z, factor(z$target_Name, naps_info$Name))
-        rti <- do.call(
-            rbind,
-            lapply(rti, function(z) z[which.max(z$maxo), , drop = FALSE]))
-        if (is.unsorted(rti$rt)) {
-            warning("Retention times are not increasingly ordered for sample ",
-                    i) 
-            rti$rt <- force_sorted(rti$rt) # this can be improved.
-        }
-        res[match(rownames(rti), rownames(res)), i] <- rti$rt
-    }
-    res
-}
 
 pos_rt_matrix <- naps_rt_matrix(md, naps_info)
 colnames(pos_rt_matrix) <- paste0("NAPS_POS_", seq_len(ncol(pos_rt_matrix)))
@@ -408,35 +372,12 @@ rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
 ## export table 
 write.csv(
     cbind(naps_info, rt_matrix),
-    file = file.path("res/", lab, "HE_naps.csv"),
+    file = file.path("results/", lab, "HE_naps.csv"),
     row.names = TRUE
 )
 ```
 
 ```{r rti-setup}
-## set up the sample data for future RTI
-get_closest_index <- function(x, idx, method = c("next", "previous",
-                                                  "closest")) {
-    method <- match.arg(method)
-    switch(method,
-           `next` = {
-               nxt <- idx > x
-               if (any(nxt))
-                   idx[nxt][1]
-               else idx[!nxt][sum(!nxt)]
-           },
-           `previous` = {
-               prv <- idx < x
-               if (any(prv))
-                   idx[prv][sum(prv)]
-               else idx[!prv][1]
-           },
-           closest = {
-               dst <- abs(idx - x)
-               idx[which.min(dst)]
-           })
-}
-
 idx <- which(sampleData(mse)$Sample.Name == "NAPS")
 idx_sample <- which(sampleData(mse)$sample_type == "sample")
 
@@ -474,20 +415,9 @@ plotAdjustedRtime(
 
 ```{r, export}
 ## export object needed for library building
-mse_pos <- mse[sampleData(mse)$polarity == "pos"]
-mse_neg <- mse[sampleData(mse)$polarity == "neg"]
-
 mse <- mse[sampleData(mse)$sample_type == "sample"]
-mse_pos <- mse[sampleData(mse)$sample_type == "sample"]
-mse_neg <- mse[sampleData(mse)$sample_type == "sample"]
 
 saveMsObject(mse,
-             AlabasterParam(path = file.path("res/",
+             AlabasterParam(path = file.path("results/",
                                              lab, "/objects/mse")))
-saveMsObject(mse_pos,
-             AlabasterParam(path = file.path("res/", 
-                                             lab, "/objects/mse_pos")))
-saveMsObject(mse_neg,
-             AlabasterParam(path = file.path("res/", 
-                                             lab, "/objects/mse_neg")))
 ```

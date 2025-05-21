@@ -1,3 +1,68 @@
+## Package install
+
+
+## function for preprocessing
+
+#' Helper function to extract a retention time matrix from the `matchedData`
+#' `data.frame`. The function simply iterates over the sample and extracts the
+#' retentio time for each chrom peak matching a NAPS. If multiple chrom peaks
+#' match a NAPS, the one with the highest intensity (`"maxo"`) is selected.
+#' The function throws an error if the extracted retention times in one sample
+#' are not ordered increasingly.
+#'
+#' @param x `data.frame` with at least columns `"rt"`, `"maxo"`, `"sample"`
+#'     and `"target_Name"`
+#'
+#' @param naps_info `data.frame` with NAPS information. Needs to have a column
+#'     `"Name"` with the name of the NAPS and with the data odered increasingly
+#'     by retention time.
+#'
+#' @return `matrix` with retention times of the NAPS in the individual samples.
+#'     Columns are samples and rows NAPS.
+naps_rt_matrix <- function(x, naps_info) {
+    smpls <- unique(x[, "sample"])
+    res <- matrix(NA_real_, ncol = length(smpls), nrow = nrow(naps_info))
+    rownames(res) <- naps_info$Name
+    for (i in smpls) {
+        z <- x[x$sample == i, ]
+        rti <- split(z, factor(z$target_Name, naps_info$Name))
+        rti <- do.call(
+            rbind,
+            lapply(rti, function(z) z[which.max(z$maxo), , drop = FALSE]))
+        if (is.unsorted(rti$rt)) {
+            warning("Retention times are not increasingly ordered for sample ",
+                    i)
+            rti$rt <- force_sorted(rti$rt) # this can be improved.
+        }
+        res[match(rownames(rti), rownames(res)), i] <- rti$rt
+    }
+    res
+}
+
+## set up the sample data for future RTI
+get_closest_index <- function(x, idx, method = c("next", "previous",
+                                                 "closest")) {
+    method <- match.arg(method)
+    switch(method,
+           `next` = {
+               nxt <- idx > x
+               if (any(nxt))
+                   idx[nxt][1]
+               else idx[!nxt][sum(!nxt)]
+           },
+           `previous` = {
+               prv <- idx < x
+               if (any(prv))
+                   idx[prv][sum(prv)]
+               else idx[!prv][1]
+           },
+           closest = {
+               dst <- abs(idx - x)
+               idx[which.min(dst)]
+           })
+}
+
+
 ## function for library building
 
 #' @title Peak matching

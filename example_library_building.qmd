@@ -6,10 +6,8 @@ editor: visual
 
 # Set up
 
--   Workflow: HMGU Reference Method
-
 This file is to demonstrate and explain what we do in for the library building.
-The actually script you will use in the file named: ....
+The actually script you will use in the file named: generic_library_building.Rmd
 
 I welcome feedback and ideas on how to improve this.
 
@@ -37,11 +35,12 @@ library(pander)
 Below I load the files that have been preprocessed.
 
 ```{r}
-#' Load compound metadata (sheet 2);
-#' skip variable renaming with .name_repair = "minimal"
-meta <- read_xlsx(paste0("data/hmgu/RefMethod_HE.xlsx"), sheet = 2L, 
+meta <- read_xlsx(paste0("data/standards.xlsx"), sheet = 2L, 
                       col_names = TRUE, skip = 1, .name_repair = "minimal") |>
     as.data.frame(check.names = FALSE)
+
+## we subset for mixture 1 for this example
+meta <-  split(meta, meta$Mixture)[[1]]
 
 #' logp standard
 library(rcdk)
@@ -51,8 +50,8 @@ meta$theo_logP <- logP
 
 # load 
 mse <- readMsObject(XcmsExperiment(), 
-                  AlabasterParam(path = file.path("res/hmgu/objects/mse")), 
-                  spectraPath = file.path("data/hmgu/HE_mzml/"))
+                  AlabasterParam(path = file.path("results/example/objects/mse")), 
+                  spectraPath = file.path("data/example/HE_mzml/"))
 
 sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 ```
@@ -163,9 +162,9 @@ the identified chromatographic peaks against the expected target compounds.
 
 ## Identify chrom peaks matching ions/adducts of the standards
 
-For chrompeak matching we will later do it in a loop, mixture per mixture. 
-The rest of the library building is then run on the whole res object. 
-For the example i will not set up the loop and we only look into mixture "1.1".
+For chrompeak matching we will later do it in a loop, mixture per mixture. The
+rest of the library building is then run on the whole res object. For the
+example i will not set up the loop and we only look into mixture "1.1".
 
 ```{r}
 #mix number
