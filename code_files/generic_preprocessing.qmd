@@ -7,67 +7,53 @@ editor: visual
 # Setup & Raw Data Investigation
 
 This document provides a *generic preprocessing pipeline* using the HMGU
-reference method for both positive and negative modes.
+reference method for both positive and negative modes. and is set up for 
+Human endosome. 
 
-> To use this: change the `lab` variable below to point to your dataset folder,
-> and ensure the file paths conform to the expected structure. Check the
-> comments through the document for more details and to see what needs to be
-> adapted to your dataset.
-
-## Load Required Packages
+## Load Required Packages and functions
 
 ```{r, message=FALSE, warning=FALSE}
-library(readxl)
-library(S4Vectors)
-library(MsExperiment)
-library(xcms)
-library(Spectra)
-library(Biobase)
-library(pheatmap)
-library(alabaster.base)
-library(MsIO)
-library(RColorBrewer)
-library(MetaboCoreUtils)
-library(MetaboAnnotation)
+source("../code_files/setup.R")
 ```
+
+In case one or more of the above libraries are not available (and hence fail to
+load), they can be installed with the R command `BiocManager::install()` (e.g.
+`BiocManager::install("alabaster.base")` to install the *alabaster.base* R
+package). Note that this requires the installation of the *BiocManager* R
+package (which can be installed with `install.packages("BiocManager")`).
 
 ## Load metadata and raw files
 
-```{r}
-lab <- "your_lab_folder"  # <<<--- CHANGE THIS to your lab name
-##' Possible: 
-##' - hmgu
-##' - thessaloniki
-##' - afekta
-##' - cembio
-##' - icl
-
-```
-
-```{r, warning=FALSE, message=FALSE}
-meta_pos <- read_xlsx(paste0("data/", lab, "/RefMethod_HE.xlsx"), 
-                      sheet = 2L, skip = 1, .name_repair = "minimal") |>
+```{r load-std-meta, warning=FALSE, message=FALSE}
+#' Load compound metadata (sheet 2);
+meta <- read_xlsx(paste0("../shared_data/standards.xlsx"), 
+                      col_names = TRUE, skip = 1, .name_repair = "minimal") |>
     as.data.frame(check.names = FALSE)
-files_name <- unique(meta_pos$filname)
-
 ```
 
-```{r, warning=FALSE, message=FALSE, eval=FALSE}
-seq_pos <- read_xlsx(paste0("data/", lab, "/HE_pos_mzml/seq.xlsx")) |> 
-    transform(polarity = "pos")
-seq_neg <- read_xlsx(paste0("data/", lab, "/HE_neg_mzml/seq.xlsx")) |> 
-    transform(polarity = "neg")
+```{r load-lcms-data, warning=FALSE, message=FALSE}
+# Load pos data
+seq_pos <- read_xlsx("../shared_data/seq_HE/seq_pos.xlsx", 
+                 col_names = TRUE) |> as.data.frame()
+seq_pos$polarity <- "pos"
+# load neg data
+seq_neg <- read_xlsx("../shared_data/seq_HE/seq_neg.xlsx", 
+                 col_names = TRUE) |> as.data.frame()
+seq_neg$polarity <- "neg"
 seq <- rbind(seq_pos, seq_neg)
-seq$filename <- paste0(seq$`Data File`, ".mzML")
 
-mse <- readMsExperiment(paste0("data/", lab,"/HE_mzml/", seq$filename), seq)
+seq$filename <- paste0(seq$`Data File`, ".mzML")
+mse <- readMsExperiment(paste0("HE_mzml/", seq$filename), 
+                        seq)
+
+sampleData(mse)
 ```
 
 Below we set up the parallel processing, which will allow to make the
 pre-processing MUCH more efficient. please adjust to the number of cores that
 your computer can handle (mine has 4 so I use 2 or 3 for data analysis)
 
-This number will then be the same as the one oyu input in the `chunkSize =`
+This number will then be the same as the one you input in the `chunkSize =`
 parameter in the preprocessing steps.
 
 ```{r}
@@ -163,15 +149,15 @@ Below decide if want to filter retention time (method dependent), if yes run:
 # Estimate peak-picking parameters on ONE file.
 
 ```{r, eval=FALSE}
-sp_meta <- split(meta_pos, meta_pos$filname)
-x_meta <- sp_meta[[1]]
-x_mse <- mse_pos[idx_sample_pos][1]
+x_meta <-  split(meta, meta$Mixture)[[1]]
+idx_sample <- which(sampleData(mse)$sample_type == "sample")[1]
+x_mse <- mse_pos[idx_sample_pos]
 ```
 
 ## Extract theoretical EICs
 
-Using theoretical m/z for both main positive adducts and all along the retention
-time.
+Using theoretical m/z for both main positive adducts and all along the
+retention time.
 
 ```{r, eval=FALSE}
 #| code-fold: true
@@ -195,7 +181,7 @@ fData(eicsMH)$std_name <- paste0(rep(x_meta$`ChEBI name`, 2), "-",
                                rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
 rownames(eicsMH) <- fData(eicsMH)$std_id
 
-dr <- "res/", lab, "/eics_full_rt_slices/M_ions/"
+dr <- "results/HE/eics_full_rt_slices/M_ions/"
 dir.create(dr, recursive = TRUE, showWarnings = FALSE)
 for (i in seq_along(eicsMH)) {
     png(paste0(dr, "EIC_", fData(eicsMH)$std_id[i], ".png"),
@@ -261,12 +247,11 @@ mz_diff <- cst |>
 range(mz_diff * 1e6 / mean(unlist(mz(cst))))
 ```
 
-Take a number a bit above the output from above. Also depends on the machine. We
-try not to go below 10ppm.
+Take a number a bit above the output from above. Also depends on the machine.
+We try not to go below 10ppm.
 
 ```{r}
 ppmval <- ... ## input your number here
-
 ```
 
 # Peak picking on ALL samples
@@ -293,7 +278,8 @@ chromPeakData(mse)$merged |>
 
 ```{r naps-part1}
 #' loading info from NAPS 
-naps_info <- read_xlsx("data/NAPS_info.xlsx", .name_repair = "minimal") |>
+naps_info <- read_xlsx("../shared_data/NAPS_info.xlsx",
+                       .name_repair = "minimal") |>
     as.data.frame()
 
 #' calculate m/z 
@@ -343,7 +329,7 @@ rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
 ## export table 
 write.csv(
     cbind(naps_info, rt_matrix),
-    file = file.path("res/", lab, "HE_naps.csv"),
+    file = file.path("results/HE/naps.csv"),
     row.names = TRUE
 )
 ```
@@ -386,6 +372,5 @@ plotAdjustedRtime(
 mse <- mse[sampleData(mse)$sample_type == "sample"]
 
 saveMsObject(mse,
-             AlabasterParam(path = file.path("res/",
-                                             lab, "/objects/mse")))
+             AlabasterParam(path = file.path("results/HE/mse")))
 ```
