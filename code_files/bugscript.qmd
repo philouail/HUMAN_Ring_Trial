@@ -112,7 +112,7 @@ mse <- adjustRtime(mse, param = pgp)
 
 
 plotAdjustedRtime(
-    mse, col = paste0(col_sample_type[sampleData(mse)$sample_type], 60))
+    mse)
 
 chromatogram(mse[idx], rt = c(30, 80), mz = c(283.98- 0.02, 283.98 + 0.02)) |> 
   plot()
