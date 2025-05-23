@@ -6,8 +6,6 @@ editor: visual
 
 # Set up & raw data investigation
 
--   Workflow: HMGU Reference Method (pos and neg)
-
 This file is here to exemplify the preprocessing steps. To show what we are
 looking for when looking at raw and processed data. A file with the generic
 worklow is called "generic_preprocessing.qmd" and is available. Please use this
@@ -15,24 +13,10 @@ and adapt it to your needs.
 
 Ideally the output should be the same.
 
-## Load Required Packages
+## Load Required Packages and functions
 
 ```{r, message=FALSE, warning=FALSE}
-library(readxl)
-library(S4Vectors)
-library(MsExperiment)
-library(xcms)
-library(Spectra)
-library(Biobase)
-library(pheatmap)
-library(alabaster.base)
-library(MsIO)
-library(RColorBrewer)
-library(MetaboCoreUtils)
-library(MetaboAnnotation)
-library(MsCoreUtils)
-
-source("code_files/setup.R")
+source("../code_files/setup.R")
 ```
 
 In case one or more of the above libraries are not available (and hence fail to
@@ -43,33 +27,28 @@ package (which can be installed with `install.packages("BiocManager")`).
 
 ## Load metadata and raw files
 
-```{r, lab-setup}
-## Here input you lab folder name, this should be present in the "data" folder 
-## with the mzml files. and will be your results folder in the "results" folder.
-lab <- "example"
-```
-
 ```{r load-std-meta, warning=FALSE, message=FALSE}
 #' Load compound metadata (sheet 2);
-meta <- read_xlsx(paste0("data/standards.xlsx"), 
+meta <- read_xlsx(paste0("../shared_data/standards.xlsx"), 
                       col_names = TRUE, skip = 1, .name_repair = "minimal") |>
     as.data.frame(check.names = FALSE)
 ```
 
 ```{r load-lcms-data, warning=FALSE, message=FALSE}
 # Load pos data
-seq_pos <- read_xlsx(paste0("data/", lab, "/HE_mzml/seq_pos.xlsx"), 
+seq_pos <- read_xlsx("../shared_data/seq_HE/seq_pos.xlsx", 
                  col_names = TRUE) |> as.data.frame()
 seq_pos$polarity <- "pos"
 # load neg data
-seq_neg <- read_xlsx(paste0("data/", lab, "/HE_mzml/seq_neg.xlsx"), 
+seq_neg <- read_xlsx("../shared_data/seq_HE/seq_neg.xlsx", 
                  col_names = TRUE) |> as.data.frame()
 seq_neg$polarity <- "neg"
 seq <- rbind(seq_pos, seq_neg)
 
 seq$filename <- paste0(seq$`Data File`, ".mzML")
-mse <- readMsExperiment(paste0("data/", lab,"/HE_mzml/", seq$filename), 
+mse <- readMsExperiment(paste0("HE_mzml/", seq$filename), 
                         seq)
+
 sampleData(mse)
 ```
 
@@ -96,17 +75,19 @@ Separate pos and neg for the overview below:
 ```{r}
 mse_pos <- mse[sampleData(mse)$polarity == "pos"]
 mse_neg <- mse[sampleData(mse)$polarity == "neg"]
-```
 
-Suggestion to extract the BPC of all samples and plot them, all in one.
-
-```{r bpc-plots}
-#| fig-height: 8
-#| fig-width: 6
 col_sample_type <- brewer.pal(
     n = max(3, length(unique(sampleData(mse_pos)$sample_type))), "Set2")
 names(col_sample_type)[seq_along(unique(sampleData(mse_pos)$sample_type))] <-
     unique(sampleData(mse_pos)$sample_type)
+```
+
+Suggestion to extract the BPC of all samples and plot them, all in one.
+
+```{r bpc-plots, eval=FALSE}
+#| fig-height: 8
+#| fig-width: 6
+
 bpc_pos <- chromatogram(mse_pos, aggregationFun = "max")
 bpc_neg <- chromatogram(mse_neg, aggregationFun = "max")
 
@@ -172,8 +153,8 @@ Comments: Nothing alarming. Similar-ish number of spectra.
 
 ```{r sep-data}
 x_meta <-  split(meta, meta$Mixture)[[1]]
-idx_sample_pos <- which(sampleData(mse_pos)$sample_type == "sample")
-x_mse <- mse_pos[idx_sample_pos][1]
+idx_sample <- which(sampleData(mse)$sample_type == "sample")[1]
+x_mse <- mse[idx_sample]
 ```
 
 ## Extract theoretical EICs
@@ -192,8 +173,8 @@ theo_mz <- mass2mz(as.numeric(x_meta[, "M"]), c("[M+H]+", "[M+Na]+")) |>
 theo_mzr <- cbind(mzmin = theo_mz - MsCoreUtils::ppm(theo_mz, 20),
                   mzmax = theo_mz + MsCoreUtils::ppm(theo_mz, 20))
 #' Expand by a fixed tolerance.
-theo_mzr[, 1L] <- theo_mzr[, 1L] - 0.005
-theo_mzr[, 2L] <- theo_mzr[, 2L] + 0.005
+theo_mzr[, 1L] <- theo_mzr[, 1L] - 0.035
+theo_mzr[, 2L] <- theo_mzr[, 2L] + 0.035 ## increase because missing data points. 
 eicsMH <- chromatogram(x_mse, mz = theo_mzr)
 
 #' would use the ID + adduct as file name.
@@ -203,10 +184,12 @@ fData(eicsMH)$std_name <- paste0(rep(x_meta$`ChEBI name`, 2), "-",
                                rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
 rownames(eicsMH) <- fData(eicsMH)$std_id
 
-dr <- "res/hmgu/eics_full_rt_slices/M_ions/"
+dr <- "results/HE/eics_full_rt_slices/M_ions/"
 dir.create(dr, recursive = TRUE, showWarnings = FALSE)
 for (i in seq_along(eicsMH)) {
-    png(paste0(dr, "EIC_", fData(eicsMH)$std_id[i], ".png"),
+    cmp <- fData(eicsMH)$std_id[i]
+    cmp <- gsub(":", "_", cmp)
+    png(paste0(dr, "EIC_", cmp, ".png"),
         width = 12, height = 8, units = "cm", res = 600, pointsize = 4)
     plot(eicsMH[i, ], main = fData(eicsMH)$std_name[i])
     legend("topright",
@@ -246,7 +229,7 @@ mz <- mz(eicsMH["CHEBI:15699-[M+H]+"]) |> as.vector()
 cst <- x_mse |>
     spectra() |>
     filterMsLevel(msLevel = 1L) |>
-    filterRt(rt = c(25, 27)) |>
+    filterRt(rt = c(23, 27)) |>
     filterMzRange(mz = mz)
 
 x_mse |>
@@ -282,14 +265,30 @@ Comment:
 -   We run it on the full dataset.
 
 ```{r peak-picking}
-cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
-                     snthresh = 7, noise = 100, extendLengthMSW = TRUE) 
+cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 300, integrate = 2,
+                     snthresh = 7, noise = 100, extendLengthMSW = TRUE)  ## increase ppm 
+
+# x_mse <- findChromPeaks(x_mse, cwp, msLevel = 1L, chunkSize = 2L)
+# chr <- chromatogram(x_mse, rt = c(30, 80), mz = c(283.98- 0.02, 283.98 + 0.02))
+# ## how many peaks 
+# chr
+# 
+# mnpp <- MergeNeighboringPeaksParam(expandRt = 6, expandMz = 0.0015,
+#                                    minProp = 0.75)
+# x_mse <- refineChromPeaks(x_mse, mnpp, chunkSize = 2L)
+# x_mse <- mse[idx_sample]
+# chr <- chromatogram(mse[1], rt = c(30, 80), mz = c(283.98- 0.02, 283.98 + 0.02))
+# ## how many peaks
+# chr
+# 
+# plot(chr)
+
 
 mse <- findChromPeaks(mse, cwp, msLevel = 1L, chunkSize = 2L)
 
 mnpp <- MergeNeighboringPeaksParam(expandRt = 6, expandMz = 0.0015,
                                    minProp = 0.75)
-mse <- refineChromPeaks(mse, mnpp, chunkSize = 2L)
+mse <- refineChromPeaks(mse, mnpp, chunkSize = 2L)w
 ```
 
 Some comments:
@@ -319,8 +318,10 @@ polarity data.
 
 ```{r naps-part1}
 #' loading info from NAPS 
-naps_info <- read_xlsx("data/NAPS_info.xlsx", .name_repair = "minimal") |>
+naps_info <- read_xlsx("../shared_data/NAPS_info.xlsx", 
+                       .name_repair = "minimal") |>
     as.data.frame()
+
 
 #' calculate m/z 
 naps_info$mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[, 1]
@@ -372,7 +373,7 @@ rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
 ## export table 
 write.csv(
     cbind(naps_info, rt_matrix),
-    file = file.path("results/", lab, "HE_naps.csv"),
+    file = file.path("results/HE/naps.csv"),
     row.names = TRUE
 )
 ```
@@ -418,6 +419,5 @@ plotAdjustedRtime(
 mse <- mse[sampleData(mse)$sample_type == "sample"]
 
 saveMsObject(mse,
-             AlabasterParam(path = file.path("results/",
-                                             lab, "/objects/mse")))
+             AlabasterParam(path = file.path("results/HE/mse")))
 ```
