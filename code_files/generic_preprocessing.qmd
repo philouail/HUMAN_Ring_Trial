@@ -7,61 +7,53 @@ editor: visual
 # Setup & Raw Data Investigation
 
 This document provides a *generic preprocessing pipeline* using the HMGU
-reference method for both positive and negative modes.
+reference method for both positive and negative modes. and is set up for 
+Human endosome. 
 
-> To use this: change the `lab` variable below to point to your dataset folder,
-> and ensure the file paths conform to the expected structure. Check the
-> comments through the document for more details and to see what needs to be
-> adapted to your dataset.
-
-## Load Required Packages
+## Load Required Packages and functions
 
 ```{r, message=FALSE, warning=FALSE}
-library(readxl)
-library(S4Vectors)
-library(MsExperiment)
-library(xcms)
-library(Spectra)
-library(Biobase)
-library(pheatmap)
-library(alabaster.base)
-library(MsIO)
-library(RColorBrewer)
-library(MetaboCoreUtils)
-library(MetaboAnnotation)
+source("../code_files/setup.R")
 ```
+
+In case one or more of the above libraries are not available (and hence fail to
+load), they can be installed with the R command `BiocManager::install()` (e.g.
+`BiocManager::install("alabaster.base")` to install the *alabaster.base* R
+package). Note that this requires the installation of the *BiocManager* R
+package (which can be installed with `install.packages("BiocManager")`).
 
 ## Load metadata and raw files
 
-```{r}
-lab <- "your_lab_folder"  # <<<--- CHANGE THIS to your lab name
-
-```
-
-```{r, warning=FALSE, message=FALSE}
-meta_pos <- read_xlsx(paste0("data/", lab, "/RefMethod_HE.xlsx"), 
-                      sheet = 2L, skip = 1, .name_repair = "minimal") |>
+```{r load-std-meta, warning=FALSE, message=FALSE}
+#' Load compound metadata (sheet 2);
+meta <- read_xlsx(paste0("../shared_data/standards.xlsx"), 
+                      col_names = TRUE, skip = 1, .name_repair = "minimal") |>
     as.data.frame(check.names = FALSE)
-files_name <- unique(meta_pos$filname)
-
 ```
 
-```{r, warning=FALSE, message=FALSE, eval=FALSE}
-seq_pos <- read_xlsx(paste0("data/", lab, "/HE_pos_mzml/seq.xlsx")) |> 
-    transform(polarity = "pos")
-seq_neg <- read_xlsx(paste0("data/", lab, "/HE_neg_mzml/seq.xlsx")) |> 
-    transform(polarity = "neg")
+```{r load-lcms-data, warning=FALSE, message=FALSE}
+# Load pos data
+seq_pos <- read_xlsx("../shared_data/seq_HE/seq_pos.xlsx", 
+                 col_names = TRUE) |> as.data.frame()
+seq_pos$polarity <- "pos"
+# load neg data
+seq_neg <- read_xlsx("../shared_data/seq_HE/seq_neg.xlsx", 
+                 col_names = TRUE) |> as.data.frame()
+seq_neg$polarity <- "neg"
 seq <- rbind(seq_pos, seq_neg)
-seq$filename <- paste0(seq$`Data File`, ".mzML")
 
-mse <- readMsExperiment(paste0("data/", lab,"/HE_mzml/", seq$filename), seq)
+seq$filename <- paste0(seq$`Data File`, ".mzML")
+mse <- readMsExperiment(paste0("HE_mzml/", seq$filename), 
+                        seq)
+
+sampleData(mse)
 ```
 
 Below we set up the parallel processing, which will allow to make the
 pre-processing MUCH more efficient. please adjust to the number of cores that
 your computer can handle (mine has 4 so I use 2 or 3 for data analysis)
 
-This number will then be the same as the one oyu input in the `chunkSize =`
+This number will then be the same as the one you input in the `chunkSize =`
 parameter in the preprocessing steps.
 
 ```{r}
@@ -120,7 +112,7 @@ plot(bpc_neg, col = paste0(col_sample_type[bpc_neg$sample_type], 80))
 grid()
 ```
 
-Observations:
+Observations: ... \[write any obs you have here\]
 
 RT ranges and spectra number per MS levels:
 
@@ -146,7 +138,7 @@ spectra(mse_neg) |>
     do.call(what = cbind)
 ```
 
-Obervations:
+Obervations: ...
 
 Below decide if want to filter retention time (method dependent), if yes run:
 
@@ -157,9 +149,9 @@ Below decide if want to filter retention time (method dependent), if yes run:
 # Estimate peak-picking parameters on ONE file.
 
 ```{r, eval=FALSE}
-sp_meta <- split(meta_pos, meta_pos$filname)
-x_meta <- sp_meta[[1]]
-x_mse <- mse_pos[idx_sample_pos][1]
+x_meta <-  split(meta, meta$Mixture)[[1]]
+idx_sample <- which(sampleData(mse)$sample_type == "sample")[1]
+x_mse <- mse_pos[idx_sample_pos]
 ```
 
 ## Extract theoretical EICs
@@ -189,7 +181,7 @@ fData(eicsMH)$std_name <- paste0(rep(x_meta$`ChEBI name`, 2), "-",
                                rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
 rownames(eicsMH) <- fData(eicsMH)$std_id
 
-dr <- "res/hmgu/eics_full_rt_slices/M_ions/"
+dr <- "results/HE/eics_full_rt_slices/M_ions/"
 dir.create(dr, recursive = TRUE, showWarnings = FALSE)
 for (i in seq_along(eicsMH)) {
     png(paste0(dr, "EIC_", fData(eicsMH)$std_id[i], ".png"),
@@ -224,7 +216,7 @@ plot(eicsMH["..."], xlim = c(.., ..)) # how large is the peak ?
 Set up a lower and upper boundary of peak-width based on your observation.
 
 ```{r}
-pw <- c(...,..) ## define here based on the observation above
+pw <- c(...,..) ## define here based on the observations above
 ```
 
 For ppm deviation:
@@ -260,7 +252,6 @@ We try not to go below 10ppm.
 
 ```{r}
 ppmval <- ... ## input your number here
-
 ```
 
 # Peak picking on ALL samples
@@ -271,111 +262,115 @@ cwp <- CentWaveParam(peakwidth = pw,
                      integrate = 2,
                      snthresh = 7, ## lower if your dataset is too noisy. 
                      noise = 100)  ## increase depending on what you estimate you minimum intensity for real signal to be
-
-mse_pos <- findChromPeaks(mse_pos[idx_sample_pos], cwp, 
-                          msLevel = 1L, chunkSize = cores_nb)
-mse_neg <- findChromPeaks(mse_neg[idx_sample_neg], cwp,
+mse <- findChromPeaks(mse, cwp, 
                           msLevel = 1L, chunkSize = cores_nb)
 
 mnpp <- MergeNeighboringPeaksParam(expandRt = max(pw)/2, 
                                    expandMz = 0.0015,
                                    minProp = 0.75)
-mse_pos <- refineChromPeaks(mse_pos, mdpp, chunkSize = cores_nb)
+mse <- refineChromPeaks(mse, mdpp, chunkSize = cores_nb)
 print("Positive mode:")
-chromPeakData(mse_pos)$merged |>
+chromPeakData(mse)$merged |>
                          table() 
-
-mse_neg <- refineChromPeaks(mse_neg, mnpp, chunkSize = cores_nb)
-print("Negative mode:")
-chromPeakData(mse_neg)$merged |>
-                      table()
 ```
 
-# Retention time correction using NAPS
+# Alignment using NAPS
 
-```{r}
-sg <- factor(sampleData(mse)$Sample.Name, levels = c("NAPS"))
-# Group peaks for NAPS
-pdp <- PeakDensityParam(sampleGroups = sg, minFraction = 1,
-                        binSize = 0.01, ppm = 10, bw = 2)
-mse <- groupChromPeaks(mse, param = pdp)
+```{r naps-part1}
+#' loading info from NAPS 
+naps_info <- read_xlsx("../shared_data/NAPS_info.xlsx",
+                       .name_repair = "minimal") |>
+    as.data.frame()
 
-subset <- which(sampleData(mse)$Sample.Name == "NAPS")
-pgp <- PeakGroupsParam(minFraction = 1, extraPeaks = 50, span = 0.5,
-                       subsetAdjust = "average", subset = subset)
+#' calculate m/z 
+naps_info$mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[, 1]
+
+#' subset positive polarity
+naps_pos <- mse[sampleData(mse)[, "Sample.Name"] == "NAPS" &
+                sampleData(mse)[, "polarity"] == "pos"]
+
+#' Match chromatographic peaks against NAPS
+cpks <- chromPeaks(naps_pos)
+naps_pos_match <- matchValues(cpks, naps_info, mzColname = c("mz", "mz_pos"),
+                              MzParam(tolerance = 0, ppm = 10))
+naps_pos_match <- naps_pos_match[whichQuery(naps_pos_match)]
+md <- matchedData(naps_pos_match, c("mz", "rt", "maxo", "sample",
+                                    "ppm_error", "target_Name")) |>
+    as.data.frame()
+
+
+pos_rt_matrix <- naps_rt_matrix(md, naps_info)
+colnames(pos_rt_matrix) <- paste0("NAPS_POS_", 
+                                  seq_len(ncol(pos_rt_matrix)))
+```
+
+```{r naps-part2}
+#' Define m/z for the expected ions of the NAPS
+naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M+CHO2]-")[, 1]
+
+#' Negative polarity
+naps_neg <- mse[sampleData(mse)[, "Sample.Name"] == "NAPS" &
+                sampleData(mse)[, "polarity"] == "neg"]
+cpks <- chromPeaks(naps_neg)
+naps_neg_match <- matchValues(cpks, naps_info, mzColname = c("mz", "mz_neg"),
+                              MzParam(tolerance = 0, ppm = 10))
+naps_neg_match <- naps_neg_match[whichQuery(naps_neg_match)]
+md <- matchedData(naps_neg_match, c("mz", "rt", "maxo", "sample",
+                                    "ppm_error", "target_Name")) |>
+    as.data.frame()
+
+neg_rt_matrix <- naps_rt_matrix(md, naps_info)
+colnames(neg_rt_matrix) <- paste0("NAPS_NEG_", seq_len(ncol(neg_rt_matrix)))
+matchedData(naps_neg_match, c("rt", "maxo", "sample", "target_Name"))
+```
+
+```{r naps-combine}
+rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
+## export table 
+write.csv(
+    cbind(naps_info, rt_matrix),
+    file = file.path("results/HE/naps.csv"),
+    row.names = TRUE
+)
+```
+
+```{r rti-setup}
+idx <- which(sampleData(mse)$Sample.Name == "NAPS")
+idx_sample <- which(sampleData(mse)$sample_type == "sample")
+
+for (i in idx_sample) {
+    idx_naps_bef <- get_closest_index(i, idx, "previous")
+    sampleData(mse)[i, "NAPS_before"] <-
+        colnames(rt_matrix)[which(idx == idx_naps_bef)]
+    idx_naps_aft <- get_closest_index(i, idx, "next")
+    sampleData(mse)[i, "NAPS_after"] <-
+        colnames(rt_matrix)[which(idx == idx_naps_aft)]
+}
+```
+
+Alignment based on the table above
+
+```{r align}
+pgp <- PeakGroupsParam(
+    minFraction = 0.75,
+    extraPeaks = 50,
+    span = 0.5,
+    subset = which(sampleData(mse)$sample_type == "NAPS"),
+    subsetAdjust = "average",
+    peakGroupsMatrix = rt_matrix)
 mse <- adjustRtime(mse, param = pgp)
 
-#' Visualize alignment results
-plotAdjustedRtime(mse, peakGroupsPch = 1)
-grid()
+
+plotAdjustedRtime(
+    mse, col = paste0(col_sample_type[sampleData(mse)$sample_type], 60))
 ```
 
-## Identify NAPS peaks
+## export object for library building
 
-```{r}
-## loading info from NAPS 
-naps_info <- read_xlsx("NAPS_info.xlsx", .name_repair = "minimal")
-
-naps_info$theo_mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[,1]
-naps_info$theo_mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M-H]-")[,1]
-naps_info <- data.frame(naps_info)
-
-rownames(naps_info) <- naps_info$Name
-
-## Perform correspondence in NAPS pos and neg 
-pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_pos)),
-                          minFraction = 1,
-                          binSize = 0.01, ppm = 10,
-                          bw = 2)
-naps_pos <- groupChromPeaks(naps_pos, param = pdp)
-
-pdp <- PeakDensityParam(sampleGroups = rep(1, length(naps_neg)),
-                          minFraction = 1,
-                          binSize = 0.01, ppm = 10,
-                          bw = 2)
-naps_neg <- groupChromPeaks(naps_neg, param = pdp)
-
-mtch <- matchValues(featureDefinitions(naps_pos)[, c("rtmed","mzmed")],
-                    naps_info, 
-                    MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "theo_mz_pos"))
-mtch <- mtch[whichQuery(mtch)]
-mtch
-naps_res_pos <- matchedData(mtch) |> data.frame()
- 
-## rt should be increasing. 
-naps_res_pos <- naps_res_pos[diff(naps_res_pos$rtmed) > 0,]
-
-naps_info[naps_res_pos$target_Name, "rt_pos"]<- naps_res_pos$rtmed
-naps_info[naps_res_pos$target_Name, "exp_mz_pos"]<- naps_res_pos$mzmed
-
-## then do the same in NEG 
-mtch <- matchValues(featureDefinitions(naps_neg)[, c("rtmed","mzmed")],
-                    naps_info, 
-                    MzParam(tolerance = 0, ppm = 5), 
-                    mzColname = c("mzmed", "theo_mz_neg"))
-mtch <- mtch[whichQuery(mtch)]
-naps_res_neg <- matchedData(mtch) |> data.frame()
-naps_res_neg <- naps_res_neg[diff(naps_res_neg$rtmed) > 0,]
-
-naps_info[naps_res_neg$target_Name, "rt_neg"]<- naps_res_neg$rtmed
-naps_info[naps_res_neg$target_Name, "exp_mz_neg"]<- naps_res_neg$mzmed
-
-write.csv(naps_info, "res/", lab,"/HE_naps.csv")
-```
-
-# Save results
-
-```{r}
+```{r, export}
 ## export object needed for library building
 mse <- mse[sampleData(mse)$sample_type == "sample"]
-mse_pos <- mse[sampleData(mse)$polarity == "pos"]
-mse_neg <- mse[sampleData(mse)$polarity == "neg"]
 
 saveMsObject(mse,
-             AlabasterParam(path = file.path("res/", lab, "/objects/mse")))
-saveMsObject(mse_pos,
-             AlabasterParam(path = file.path("res/", lab, "/objects/mse_pos")))
-saveMsObject(mse_neg,
-             AlabasterParam(path = file.path("res/", lab, "/objects/mse_neg")))
+             AlabasterParam(path = file.path("results/HE/mse")))
 ```
