@@ -101,6 +101,8 @@ rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
 
 
 ```{r}
+mse_raw <- mse
+
 pgp <- PeakGroupsParam(
     minFraction = 0.75,
     extraPeaks = 50,
@@ -111,11 +113,81 @@ pgp <- PeakGroupsParam(
 mse <- adjustRtime(mse, param = pgp)
 
 
-plotAdjustedRtime(
-    mse)
+plotAdjustedRtime(mse)
+rtr <- c(30, 80)
+mzr <- c(283.98 - 0.02, 283.98 + 0.02)
 
-chromatogram(mse[idx], rt = c(30, 80), mz = c(283.98- 0.02, 283.98 + 0.02)) |> 
-  plot()
+
+chr_raw <- chromatogram(mse_raw[idx], rt = rtr, mz = mzr)
+chr <- chromatogram(mse[idx], rt = rtr, mz = mzr)
+
+par(mfrow = c(1, 2))
+plot(chr_raw)
+abline(v = rtime(chr_raw[1, 1]), lty = 3, col = "#00000080")
+plot(chr)
+abline(v = rtime(chr[1, 1]), lty = 3, col = "#00000080")
+
+```
+
+We next compare the RT of the raw and adjusted object.
+
+```{r}
+a <- rtime(mse_raw[idx])
+b <- rtime(mse[idx])
+all.equal(a, b)
+```
+
+So, `[` silently drops adjusted retention times.
+
+```{r}
+a <- rtime(mse_raw[idx, keepAdjustedRtime = TRUE])
+b <- rtime(mse[idx, keepAdjustedRtime = TRUE])
+all.equal(a, b)
+```
+
+Question is if also the retention times of the chromatographic peaks stay the
+same or differ.
+
+```{r}
+a <- chromPeaks(mse_raw[idx])
+b <- chromPeaks(mse[idx])
+all.equal(a[, "rt"], b[, "rt"])
+```
+
+Nope. And if we force keeping adjusted retention times:
+
+```{r}
+a <- chromPeaks(mse_raw[idx, keepAdjustedRtime = TRUE])
+b <- chromPeaks(mse[idx, keepAdjustedRtime = TRUE])
+all.equal(a[, "rt"], b[, "rt"])
+```
+
+Question is whether we simply can not fully *restore* the retention times, or if
+we simply **forget** to do so. We next compare the retention times with and
+without the `keepAdjustedRtime = TRUE`.
+
+```{r}
+a <- chromPeaks(mse[idx])
+b <- chromPeaks(mse[idx, keepAdjustedRtime = TRUE])
+all.equal(a[, "rt"], b[, "rt"])
+```
+
+Aaaah, so we **forget** to repair/restore the retention times of the
+chromatographic peaks on data subsets.
+
+How does it look if we keep adjusted rtimes?
+
+```{r}
+chr_raw <- chromatogram(mse_raw[idx, keepAdjustedRtime = TRUE],
+                        rt = rtr, mz = mzr)
+chr <- chromatogram(mse[idx, keepAdjustedRtime = TRUE], rt = rtr, mz = mzr)
+
+par(mfrow = c(1, 2))
+plot(chr_raw)
+abline(v = rtime(chr_raw[1, 1]), lty = 3, col = "#00000080")
+plot(chr)
+abline(v = rtime(chr[1, 1]), lty = 3, col = "#00000080")
+
 ```
 
 
