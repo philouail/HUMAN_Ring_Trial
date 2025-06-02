@@ -2,7 +2,7 @@
 library(readxl)
 library(S4Vectors)
 library(MsExperiment)
-library(xcms)
+library(xcms) ## will also be devel for incorporating a few fixes
 library(Spectra)
 library(Biobase)
 library(pheatmap)
@@ -28,13 +28,11 @@ meta$M <- as.numeric(meta$M)
 #' logP <- vapply(parsed, get.xlogp, FUN.VALUE = numeric(1))
 #' meta$theo_logP <- logP
 
-
-
 ## function for preprocessing
 
 #' Helper function to extract a retention time matrix from the `matchedData`
 #' `data.frame`. The function simply iterates over the sample and extracts the
-#' retentio time for each chrom peak matching a NAPS. If multiple chrom peaks
+#' retention time for each chrom peak matching a NAPS. If multiple chrom peaks
 #' match a NAPS, the one with the highest intensity (`"maxo"`) is selected.
 #' The function throws an error if the extracted retention times in one sample
 #' are not ordered increasingly.

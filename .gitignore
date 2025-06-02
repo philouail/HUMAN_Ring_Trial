@@ -4,3 +4,6 @@
 *.sqlite
 /standard_mixes_prep
 /example/results
+/afekta/HE_mzml
+/afekta
+/auth

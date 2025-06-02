@@ -23,7 +23,6 @@ mse <- readMsExperiment(paste0("../example/HE_mzml/", seq$filename),
 sampleData(mse)
 ```
 
-
 ```{r}
 ## susbet to the first sample 
 idx <- which(sampleData(mse)$sample_type == "sample")[1]
@@ -33,7 +32,6 @@ chr <- chromatogram(mse[idx], rt = c(30, 80), mz = c(283.98- 0.03, 283.98 + 0.03
 chr
 plot(chr)
 ```
-
 
 ```{r}
 cwp <- CentWaveParam(peakwidth = c(4, 12), ppm = 20, integrate = 2,
@@ -49,7 +47,6 @@ mse <- refineChromPeaks(mse, mnpp, chunkSize = 2L)
 chromatogram(mse[idx], rt = c(30, 80), mz = c(283.98- 0.02, 283.98 + 0.02)) |> 
   plot()
 ```
-
 
 ```{r}
 #' loading info from NAPS 
@@ -99,7 +96,6 @@ matchedData(naps_neg_match, c("rt", "maxo", "sample", "target_Name"))
 rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
 ```
 
-
 ```{r}
 pgp <- PeakGroupsParam(
     minFraction = 0.75,
@@ -117,5 +113,3 @@ plotAdjustedRtime(
 chromatogram(mse[idx], rt = c(30, 80), mz = c(283.98- 0.02, 283.98 + 0.02)) |> 
   plot()
 ```
-
-
