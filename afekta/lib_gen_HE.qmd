@@ -1,0 +1,169 @@
+---
+title: "library_generation"
+format: html
+---
+
+# intro 
+
+The goal here is to generate the libraries for the ring trial.
+
+- A table for MS1 annotation 
+- A mgf file for MS2 level annotation.
+
+
+Load results table curated by the labs: 
+
+```{r}
+study_group <- "HE" #example HE / FE / Others
+dr <- file.path("results", study_group)
+library(readxl)
+res_table <- read.csv(file.path(dr, "peak_evidence_rt_grouped_he_Dennisse.csv"))
+```
+
+ms2 data:
+
+```{r}
+library(xcms)
+library(MsIO)
+library(MsExperiment)
+
+source("setup.R")
+peak <- read.csv(file.path(dr, "peak_evidence.csv" ))
+peak[peak$mixture == "3_1", ]
+
+mse <- readMsObject(XcmsExperiment(), 
+            AlabasterParam(path = file.path(dr, "mse")), 
+            spectraPath = file.path(paste0( study_group, "_mzml/"))) 
+sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
+meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
+
+
+sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
+meta$Mixture <- gsub("\\.", "_", meta$Mixture)
+
+mse2 <- readMsObject(XcmsExperiment(), 
+            AlabasterParam(path = file.path(dr, "mse2")), 
+            spectraPath = file.path(paste0( study_group, "_mzml/")))
+sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
+sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
+```
+
+# Clean up data
+
+we need to susbet the table just to keep the TRUE values:
+
+```{r}
+n_tot <- nrow(meta) 
+
+## remove NA and filter for TRUE (format was a bit weird)
+res_table <- res_table[!is.na(res_table$T.F.NA), ]
+res_true <- res_table[res_table$T.F.NA == "TRUE", ] 
+
+n_tot / nrow(res_true)
+```
+
+Get quick info about annotation ratio.
+
+```{r}
+## Check an example.
+x <- res_true[1, ]
+
+cpds <- unlist(strsplit(x$chrom_peak_id, "\\|"))
+ion <- unlist(strsplit(x$adduct, "\\|"))
+
+## plot them - to quickly check. 
+eic <- chromPeakChromatograms(mse, peaks = cpds,
+                              expandRt = 10,
+                              expandMz = 0
+                              )
+plot(eic)
+```
+
+We seem to have multiple peaks for the same adduct. 
+
+```{r}
+y <- peak[peak$chrom_peak_id %in% cpds, ]
+
+split(y, y$adduct)
+
+l <- split(y, y$adduct)[[1]]
+## keep lowest ppm
+sub <- lapply(split(y, y$adduct),
+              function(l) l[l$ppm_error == min(l$ppm_error), ])
+library(dplyr)
+fin <- data.frame()
+idx <- res_true$target_ChEBI.name == "(3S,5R)-fluvastatin"
+res_true[idx, ]
+```
+
+Summarize each table and take the lowest ppm error. 
+On the whole table.
+
+```{r}
+## do that for all 
+for (i in seq_len(nrow(res_true))) {
+    x <- res_true[i, ]
+    cpds <- unlist(strsplit(x$chrom_peak_id, "\\|"))
+    y <- peak[peak$chrom_peak_id %in% cpds, ]
+    l_mer <- lapply(split(y, y$adduct),
+              function(l) l[l$ppm_error == min(l$ppm_error), ])
+    fin <- rbind(fin, bind_rows(l_mer))
+}
+
+rownames(fin) <- fin$chrom_peak_id
+
+fin
+```
+
+Next: filter for the one that have "ms2_count" column positive. 
+
+```{r}
+fin_ms2 <- fin[fin$ms2_count > 0, ]
+
+cpds <- fin_ms2$chrom_peak_id
+```
+
+# Generate library:
+
+2 injections: 
+
+```{r}
+test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2, 
+                              waters_data = FALSE)
+
+fin <- fin[, c("mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax", 
+               "target_ChEBI.name", "target_ChEBI", "target_InChIKey", 
+               "adduct", "polarity", "ms2_true_count", "RTI", "mixture")]
+
+fin$ms2_true_count <- as.logical(fin$ms2_true_count)
+
+colnames(fin) <- c("mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax", 
+                   "compound_name", "ChEBI", "InChIKey", "adduct", "polarity",
+                   "matched_to_library", "RTI", "mixture") 
+
+# export 
+write.csv(fin, "ring_trial_library_HE.csv") ## This is moved to results/HE
+```
+
+# Generate mgf file
+
+```{r, eval= FALSE}
+# Example
+spec1 <- split(test, test$chrom_peak_id)[[2]]
+plotSpectra(spec1)
+```
+
+- This is not combined nor cleaned. 
+- I did not get any feedback from the labs regarding this. 
+- Could be done by the lab themselves. 
+
+```{r}
+peakdata <- fin[test$chrom_peak_id, -c(1:6, 11)]
+
+test<- cbind2(test, peakdata)
+test <- dropNaSpectraVariables(test)
+
+library(MsBackendMgf)
+export(test@backend, MsBackendMgf(), file = "std_spectra_HE.mgf")
+```
+

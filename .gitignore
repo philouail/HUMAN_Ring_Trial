@@ -5,7 +5,8 @@
 /standard_mixes_prep
 /example/results
 /afekta/HE_mzml
-/afekta
+/afekta/results/HE/mse
+/afekta/results/HE/mse2
 /auth
 *.DS_Store
 /cembio/results/HE/mse
@@ -18,4 +19,8 @@
 /icl/results/HE/mse2
 /icl/results/HE/mse
 /shared_data
-*.xlsx
+
+/afekta/results/HE/mse_new
+*.zip
+/afekta/results/Others/mse
+/afekta/results/Others/mse2
