@@ -56,22 +56,38 @@ as possible.
 
 To support users in adapting the pipeline to their own data, we provide:
 
--   **Example files**:
+-   **Example lab folder**:
 
     -   `example_preprocessing.qmd`: Step-by-step explanation of the
         preprocessing procedure.
     -   `example_library_building.qmd`: Step-by-step explanation of the
         library-building process.
 
-    These are designed for clarity and learning.
+    These are designed for clarity and learning. And as an example to how each
+    lab analysis should be organised.
 
 -   **Generic files**:
 
     -   `generic_preprocessing.qmd`
     -   `generic_library_building.qmd`
+    -   `setup.R`
 
     These are simplified versions that users can easily adapt to their own
     datasets. They include the necessary logic but omit extensive inline
     commentary and visualization.
 
-## 
+## Results 
+
+The lab comparison will be generated in the `results` folder, which will
+contain:
+
+    - `lab_comparison.qmd`: A comprehensive comparison of results across all
+      participating labs.
+    - `figures/`: A directory containing all figures generated during the lab
+      comparison analysis.
+    - `rt_analysis_function.R`: A script containing functions used in the lab
+      comparison analysis.
+    - `objects/`: A directory for storing intermediate objects used in the lab
+      comparison analysis.
+
+

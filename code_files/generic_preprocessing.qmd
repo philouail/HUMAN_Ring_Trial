@@ -1,7 +1,7 @@
 ---
 title: "generic_preprocessing"
 format: html
-editor: visual
+editor: source
 ---
 
 # Setup & Raw Data Investigation
@@ -13,7 +13,9 @@ Human endosome.
 ## Load Required Packages and functions
 
 ```{r, message=FALSE, warning=FALSE}
-source("../code_files/setup.R")
+source("setup.R")
+
+study_group <- "HE" #example HE / FE / Others
 ```
 
 In case one or more of the above libraries are not available (and hence fail to
@@ -22,28 +24,21 @@ load), they can be installed with the R command `BiocManager::install()` (e.g.
 package). Note that this requires the installation of the *BiocManager* R
 package (which can be installed with `install.packages("BiocManager")`).
 
-## Load metadata and raw files
-
-```{r load-std-meta, warning=FALSE, message=FALSE}
-#' Load compound metadata (sheet 2);
-meta <- read_xlsx(paste0("../shared_data/standards.xlsx"), 
-                      col_names = TRUE, skip = 1, .name_repair = "minimal") |>
-    as.data.frame(check.names = FALSE)
-```
+## Load metadata and raw file
 
 ```{r load-lcms-data, warning=FALSE, message=FALSE}
 # Load pos data
-seq_pos <- read_xlsx("../shared_data/seq_HE/seq_pos.xlsx", 
+seq_pos <- read_xlsx(paste0("seq_", study_group, "/seq_pos.xlsx"), 
                  col_names = TRUE) |> as.data.frame()
 seq_pos$polarity <- "pos"
 # load neg data
-seq_neg <- read_xlsx("../shared_data/seq_HE/seq_neg.xlsx", 
+seq_neg <- read_xlsx(paste0("seq_", study_group, "/seq_neg.xlsx"), 
                  col_names = TRUE) |> as.data.frame()
 seq_neg$polarity <- "neg"
 seq <- rbind(seq_pos, seq_neg)
 
 seq$filename <- paste0(seq$`Data File`, ".mzML")
-mse <- readMsExperiment(paste0("HE_mzml/", seq$filename), 
+mse <- readMsExperiment(paste0(study_group, "_mzml/", seq$filename), 
                         seq)
 
 sampleData(mse)
@@ -72,17 +67,18 @@ Split pos and neg for this part.
 ```{r}
 mse_pos <- mse[sampleData(mse)$polarity == "pos"]
 mse_neg <- mse[sampleData(mse)$polarity == "neg"]
-```
 
-Suggestion to extract the BPC of all samples and plot them, all in one. BPC
-
-```{r, eval=FALSE}
-#| fig-height: 8
-#| fig-width: 6
 col_sample_type <- brewer.pal(
     n = max(3, length(unique(sampleData(mse_pos)$sample_type))), "Set2")
 names(col_sample_type)[seq_along(unique(sampleData(mse_pos)$sample_type))] <-
     unique(sampleData(mse_pos)$sample_type)
+```
+
+Suggestion to extract the BPC of all samples and plot them, all in one. BPC
+
+```{r}
+#| fig-height: 8
+#| fig-width: 6
 bpc_pos <- chromatogram(mse_pos, aggregationFun = "max")
 bpc_neg <- chromatogram(mse_neg, aggregationFun = "max")
 
@@ -116,7 +112,7 @@ Observations: ... \[write any obs you have here\]
 
 RT ranges and spectra number per MS levels:
 
-```{r, eval=FALSE}
+```{r}
 #' Range
 range(rtime(mse_pos))
 range(rtime(mse_neg))
@@ -140,18 +136,20 @@ spectra(mse_neg) |>
 
 Obervations: ...
 
-Below decide if want to filter retention time (method dependent), if yes run:
-
+!!! Below decide if want to filter retention time (method dependent), if yes run:
+- we should all have the same RT range for ref method. lab specific will decide 
+  their own thing. 
+  
 ```{r}
-# mse <- filterRt(mse, rt = c(0, 60)) ## change c(0,60) to your settings
+mse <- filterRt(mse, rt = c(18, 720)) ## based on discussion, for Ref method. 
 ```
 
 # Estimate peak-picking parameters on ONE file.
 
-```{r, eval=FALSE}
+```{r}
 x_meta <-  split(meta, meta$Mixture)[[1]]
 idx_sample <- which(sampleData(mse)$sample_type == "sample")[1]
-x_mse <- mse_pos[idx_sample_pos]
+x_mse <- mse[idx_sample]
 ```
 
 ## Extract theoretical EICs
@@ -159,7 +157,7 @@ x_mse <- mse_pos[idx_sample_pos]
 Using theoretical m/z for both main positive adducts and all along the
 retention time.
 
-```{r, eval=FALSE}
+```{r}
 #| code-fold: true
 #| code-summary: "Show the code"
 
@@ -170,8 +168,8 @@ theo_mz <- mass2mz(x_meta[, "M"], c("[M+H]+", "[M+Na]+")) |>
 theo_mzr <- cbind(mzmin = theo_mz - MsCoreUtils::ppm(theo_mz, 20),
                   mzmax = theo_mz + MsCoreUtils::ppm(theo_mz, 20))
 #' Expand by a fixed tolerance.
-theo_mzr[, 1L] <- theo_mzr[, 1L] - 0.005
-theo_mzr[, 2L] <- theo_mzr[, 2L] + 0.005
+theo_mzr[, 1L] <- theo_mzr[, 1L] - 0.05 # increase if missing data points, decrease if too much noise.
+theo_mzr[, 2L] <- theo_mzr[, 2L] + 0.05
 eicsMH <- chromatogram(x_mse, mz = theo_mzr)
 
 #' would use the ID + adduct as file name.
@@ -181,10 +179,12 @@ fData(eicsMH)$std_name <- paste0(rep(x_meta$`ChEBI name`, 2), "-",
                                rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
 rownames(eicsMH) <- fData(eicsMH)$std_id
 
-dr <- "results/HE/eics_full_rt_slices/M_ions/"
+dr <- paste0("results/", study_group, "/eics_full_rt_slices/M_ions/")
 dir.create(dr, recursive = TRUE, showWarnings = FALSE)
 for (i in seq_along(eicsMH)) {
-    png(paste0(dr, "EIC_", fData(eicsMH)$std_id[i], ".png"),
+    cmp <- fData(eicsMH)$std_id[i]
+    cmp <- gsub(":", "_", cmp)
+    png(paste0(dr, "EIC_", cmp, ".png"),
         width = 12, height = 8, units = "cm", res = 600, pointsize = 4)
     plot(eicsMH[i, ], main = fData(eicsMH)$std_name[i])
     legend("topright",
@@ -193,7 +193,6 @@ for (i in seq_along(eicsMH)) {
     grid()
     dev.off()
 }
-
 ```
 
 We have `r length(theo_mz)` number of standard.
@@ -205,12 +204,11 @@ only once per lab.
 
 First quickly check a few peaks to look for peak-width:
 
-```{r, eval=FALSE}
+```{r}
 ## !!! adjust to compounds you see interesting peaks, look for multiple !!!
 plot(eicsMH["..."], xlim = c(.., ..)) # how large is the peak ?
 plot(eicsMH["..."], xlim = c(.., ..)) # how large is the peak ?
 plot(eicsMH["..."], xlim = c(.., ..)) # how large is the peak ?
- 
 ```
 
 Set up a lower and upper boundary of peak-width based on your observation.
@@ -223,19 +221,26 @@ For ppm deviation:
 
 Choose a compound from above and adjust the
 
-```{r, eval=FALSE}
+```{r}
 mz <- mz(eicsMH["..."]) |> as.vector() ## choose compound here
+
+x_mse |>
+    filterMsLevel(1L) |>
+    filterRt(c(25, 27)) |>
+    filterMzRange(mz = c(mz[1] + ..., mz[2] - ...)) |> # play around with this to determinate the best range
+    plot()
+
 cst <- x_mse |>
     spectra() |>
     filterMsLevel(msLevel = 1L) |>
-    filterRt(rt = c(25, 27)) |> ## adjust the rt based on the objservation. be VERY restricitive. 
-    filterMzRange(mz = mz)
+    filterRt(rt = c(25, 27)) |> # be restrictive 
+    filterMzRange(mz =  c(mz[1] + ..., mz[2] - ...)) # set it up as above.
 
 #' Show the number of peaks per m/z filtered spectra
 lengths(cst) ### the output here should look a bit like "1 1 1 1 1 " 
 ```
 
-```{r, eval=FALSE}
+```{r}
 #' Calculate the difference in m/z values between scans
 mz_diff <- cst |>
     mz() |>
@@ -256,7 +261,7 @@ ppmval <- ... ## input your number here
 
 # Peak picking on ALL samples
 
-```{r,eval=FALSE}
+```{r}
 cwp <- CentWaveParam(peakwidth = pw,
                      ppm = ppmval,
                      integrate = 2,
@@ -265,11 +270,11 @@ cwp <- CentWaveParam(peakwidth = pw,
 mse <- findChromPeaks(mse, cwp, 
                           msLevel = 1L, chunkSize = cores_nb)
 
-mnpp <- MergeNeighboringPeaksParam(expandRt = max(pw)/2, 
+mdpp <- MergeNeighboringPeaksParam(expandRt = max(pw)/2, 
                                    expandMz = 0.0015,
                                    minProp = 0.75)
 mse <- refineChromPeaks(mse, mdpp, chunkSize = cores_nb)
-print("Positive mode:")
+
 chromPeakData(mse)$merged |>
                          table() 
 ```
@@ -286,7 +291,7 @@ naps_info <- read_xlsx("../shared_data/NAPS_info.xlsx",
 naps_info$mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[, 1]
 
 #' subset positive polarity
-naps_pos <- mse[sampleData(mse)[, "Sample.Name"] == "NAPS" &
+naps_pos <- mse[sampleData(mse)[, "sample_type"] == "NAPS" &
                 sampleData(mse)[, "polarity"] == "pos"]
 
 #' Match chromatographic peaks against NAPS
@@ -309,7 +314,7 @@ colnames(pos_rt_matrix) <- paste0("NAPS_POS_",
 naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M+CHO2]-")[, 1]
 
 #' Negative polarity
-naps_neg <- mse[sampleData(mse)[, "Sample.Name"] == "NAPS" &
+naps_neg <- mse[sampleData(mse)[, "sample_type"] == "NAPS" &
                 sampleData(mse)[, "polarity"] == "neg"]
 cpks <- chromPeaks(naps_neg)
 naps_neg_match <- matchValues(cpks, naps_info, mzColname = c("mz", "mz_neg"),
@@ -329,7 +334,7 @@ rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
 ## export table 
 write.csv(
     cbind(naps_info, rt_matrix),
-    file = file.path("results/HE/naps.csv"),
+    file = file.path("results", study_group, "naps.csv"),
     row.names = TRUE
 )
 ```
@@ -371,6 +376,15 @@ plotAdjustedRtime(
 ## export object needed for library building
 mse <- mse[sampleData(mse)$sample_type == "sample"]
 
-saveMsObject(mse,
-             AlabasterParam(path = file.path("results/HE/mse")))
+if (length(unique(sampleData(mse)$ms_level)) > 1) {
+    mse2 <- mse[sampleData(mse)$ms_level == 2]
+    mse <- mse[sampleData(mse)$ms_level == 1]
+    saveMsObject(mse2,
+             AlabasterParam(path = file.path("results", study_group, "mse2")))
+    saveMsObject(mse,
+             AlabasterParam(path = file.path("results", study_group,"mse")))
+} else {
+    saveMsObject(mse,
+             AlabasterParam(path = file.path("results", study_group,"mse")))
+}
 ```
