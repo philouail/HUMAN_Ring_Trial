@@ -1,6 +1,8 @@
 ---
 title: "chr_genderation_comparison"
 format: html
+execute:
+  dir: project
 ---
 
 # Introduction
@@ -70,24 +72,23 @@ source("rt_analysis_function.R")
 bpparam <- MulticoreParam(workers = parallel::detectCores() - 1)
 ```
 
-
 # Full data analysis
 
 Below I load the preprocessed data from each lab.
 
-```{r, eval=I(!file.exists("object/sp_full.RData"))}
-sp_afekta <- load_data(lab =  "afekta", study_group = "HE")
-sp_hmgu <- load_data(lab = "hmgu", study_group = "HE")
-sp_icl <- load_data(lab = "icl", study_group = "HE")
-sp_cembio <- load_data(lab = "cembio", study_group = "HE")
+```{r}
+if (!file.exists("object/sp_full.RData")) {
+  sp_afekta <- load_data(lab = "afekta", study_group = "HE")
+  sp_hmgu <- load_data(lab = "hmgu", study_group = "HE")
+  sp_icl <- load_data(lab = "icl", study_group = "HE")
+  sp_cembio <- load_data(lab = "cembio", study_group = "HE")
 
-sp_full <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio) 
-save(sp_full, file = "object/sp_full.RData")
-rm(sp_afekta, sp_hmgu, sp_icl)
-```
-
-```{r, eval=I(file.exists("object/sp_full.RData"))}
-load("object/sp_full.RData")
+  sp_full <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+  save(sp_full, file = "object/sp_full.RData")
+  rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+} else {
+  load("object/sp_full.RData")
+}
 ```
 
 If we summarise the number of MS1 spectra per lab: 
@@ -101,7 +102,7 @@ They should be fairly similar for the harmonized method as we agreed on a
 range during preprocessing.
 
 ```{r}
-lapply(split(rtime(sp_full), sp_full$lab) , range)
+lapply(split(rtime(sp_full), sp_full$lab), range)
 ```
 
 
@@ -117,16 +118,16 @@ only keep the bpc/tic ratio.
 ### Base Peak Chromatogram (BPC) area
 
 ```{r, eval=I(!file.exists("object/bpc_full.RData"))}
-bpc_full <- Chromatograms(sp_full, summarize.method = "max",
-                     factorize.by= "dataOrigin", 
-                     spectraVariables = c("mixture", "lab")) 
-
-bpc_full <- setBackend(bpc_full, ChromBackendMemory())
-save(file = "object/bpc_full.RData", bpc_full)
-```
-
-```{r, eval=I(file.exists("object/bpc_full.RData"))}
-load("object/bpc_full.RData")
+if(!file.exists("object/bpc_full.RData")) {
+  bpc_full <- Chromatograms(sp_full, summarize.method = "max",
+                       factorize.by= "dataOrigin", 
+                       spectraVariables = c("mixture", "lab")) 
+  
+  bpc_full <- setBackend(bpc_full, ChromBackendMemory())
+  save(file = "object/bpc_full.RData", bpc_full)
+} else {
+  load("object/bpc_full.RData")
+}
 ```
 
 Below we compute the BPC area per mixture per lab and summarize across 
@@ -157,7 +158,7 @@ cv_per_mix <- tapply(sbpc, bpc_full$mixture, function(x) sd(x) / mean(x))
 Compare BPC area vs TIC area per lab.
 If TIC is similar but BPC differs → different dominant ions detected.
 
-```{r, eval =!file.exists("object/tic_full.RData")}
+```{r, eval =I(!file.exists("object/tic_full.RData"))}
 tic_full <- Chromatograms(sp_full, summarize.method = "sum",
                      factorize.by= "dataOrigin",
                      spectraVariables = c("mixture", "lab"))
@@ -347,40 +348,39 @@ sensitivity rather than background noise.
 
 Load the results sheet below 
 
-```{r, eval=I(!file.exists("object/sp_full_detect.RData"))}
-bpparam <- MulticoreParam(8) # for the cluster
-
-sp_afekta <- detect_signal(lab = "afekta", study_group = "HE", 
-                           annotated = FALSE, bpparam = bpparam) # much better.
-save(sp_afekta, file = "object/sp_afekta.RData") ## trying to save some memory space. 
-rm(sp_afekta) 
-
-sp_hmgu <- detect_signal(lab = "hmgu", study_group = "HE",
-                         annotated = FALSE, bpparam = bpparam) # 
-save(sp_hmgu, file = "object/sp_hmgu.RData")
-rm(sp_hmgu) 
-
-sp_icl <- detect_signal(lab = "icl", study_group = "HE",
-                        annotated = FALSE, bpparam = bpparam)
-save(sp_icl, file = "object/sp_icl.RData")
-rm(sp_icl)
-
-sp_cembio <- detect_signal(lab = "cembio", study_group = "HE",
-                           annotated = FALSE, bpparam = bpparam)
-save(sp_cembio, file = "object/sp_cembio.RData")
-
-
-load("object/sp_hmgu.RData")
-load("object/sp_afekta.RData")
-load("object/sp_icl.RData")
-
-sp_full_detect <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-save(sp_full_detect, file = "object/sp_full_detect.RData")
-rm(sp_afekta, sp_hmgu, sp_icl)
-```
-
-```{r, eval=I(file.exists("object/sp_full_detect.RData"))}
-load("object/sp_full_detect.RData")
+```{r}
+if (!file.exists("object/sp_full_detect.RData")) {
+  bpparam <- MulticoreParam(8) # for the cluster
+  sp_afekta <- detect_signal(lab = "afekta", study_group = "HE", 
+                             annotated = FALSE, bpparam = bpparam) # much better.
+  save(sp_afekta, file = "object/sp_afekta.RData") ## trying to save some memory space. 
+  rm(sp_afekta) 
+  
+  sp_hmgu <- detect_signal(lab = "hmgu", study_group = "HE",
+                           annotated = FALSE, bpparam = bpparam) # 
+  save(sp_hmgu, file = "object/sp_hmgu.RData")
+  rm(sp_hmgu) 
+  
+  sp_icl <- detect_signal(lab = "icl", study_group = "HE",
+                          annotated = FALSE, bpparam = bpparam)
+  save(sp_icl, file = "object/sp_icl.RData")
+  rm(sp_icl)
+  
+  sp_cembio <- detect_signal(lab = "cembio", study_group = "HE",
+                             annotated = FALSE, bpparam = bpparam)
+  save(sp_cembio, file = "object/sp_cembio.RData")
+  
+  
+  load("object/sp_hmgu.RData")
+  load("object/sp_afekta.RData")
+  load("object/sp_icl.RData")
+  
+  sp_full_detect <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+  save(sp_full_detect, file = "object/sp_full_detect.RData")
+  rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+} else {
+  load("object/sp_full_detect.RData")
+}
 ```
 
 Summarize the number of MS1 spectra per lab:
@@ -403,16 +403,16 @@ Now baseline noise and spurious fluctuations are largely removed.
 
 We generate the BPC from the detected signal.
 
-```{r, eval =I(!file.exists("object/bpc_detected.RData"))}
-bpc_detected <- Chromatograms(sp_full_detect, summarize.method = "max",
-                     factorize.by= "dataOrigin", 
-                     spectraVariables = c("lab", "mixture")) 
-bpc_detected <- setBackend(bpc_detected, ChromBackendMemory())
-save(file = "object/bpc_detected.RData", bpc_detected)
-```
-
 ```{r}
-load("object/bpc_detected.RData")
+if (!file.exists("object/bpc_detected.RData")) {
+  bpc_detected <- Chromatograms(sp_full_detect, summarize.method = "max",
+                       factorize.by= "dataOrigin", 
+                       spectraVariables = c("lab", "mixture")) 
+  bpc_detected <- setBackend(bpc_detected, ChromBackendMemory())
+  save(file = "object/bpc_detected.RData", bpc_detected)
+} else {
+  load("object/bpc_detected.RData")
+}
 ```
 
 We summarize the BPC area per mixture per lab by summing the intensity values.
@@ -431,17 +431,16 @@ plot(cv_per_mix_det)
 
 ### Total Ion Current (TIC) area
 
-```{r, eval =I(!file.exists("object/tic_detect.RData"))}
-tic_detect <- Chromatograms(sp_full_detect, summarize.method = "sum",
-                     factorize.by= "dataOrigin",
-                     spectraVariables = c("mixture", "lab")) 
-
-tic_detect <- setBackend(tic_detect, ChromBackendMemory())
-save(file = "object/tic_detect.RData", tic_detect)
-```
-
 ```{r}
-load("object/tic_detect.RData")
+if (!file.exists("object/tic_detect.RData")) {
+  tic_detect <- Chromatograms(sp_full_detect, summarize.method = "sum",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab")) 
+  tic_detect <- setBackend(tic_detect, ChromBackendMemory())
+  save(file = "object/tic_detect.RData", tic_detect)
+} else {
+  load("object/tic_detect.RData")
+}
 ```
 
 We summarize the TIC area per mixture per lab by summing the intensity values.

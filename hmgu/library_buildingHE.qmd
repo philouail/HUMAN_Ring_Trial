@@ -164,7 +164,8 @@ for (i in seq_along(list_res$spectra)) {
     cmp <- list_res$data[a$chrom_peak_id, "target_ChEBI"]
     cmp <- gsub(":", "_", cmp)
     adct <- list_res$data[a$chrom_peak_id, "adduct"]
-    dr_tmp <- file.path(dr, list_res$data[a$chrom_peak_id, "mixture"], "ms1_adduct_plots")
+    dr_tmp <- file.path(dr, list_res$data[a$chrom_peak_id, "mixture"], 
+                        "ms1_adduct_plots")
     dir.create(dr_tmp, showWarnings = FALSE, recursive = TRUE)
     f <- png(paste0(dr_tmp, "/", cmp, "-", a$chrom_peak_id, "-ions.png"),
              width = 8, height = 8, units = "cm", res = 600, pointsize = 4)

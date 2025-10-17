@@ -23,8 +23,10 @@ LC-MS methods across various laboratories:
     -   Once using the **HUMAN reference method**
 
 Because the ground truth (i.e., the identity and number of metabolites) is
-known, we can: - Compare chromatographic methods **within** each lab - Compare
-LC-MS setups **between** labs using the standardized method
+known, we can: 
+
+- Compare chromatographic methods **within** each lab 
+- Compare LC-MS setups **between** labs using the standardized method
 
 ## Project Structure
 
@@ -39,6 +41,9 @@ as possible.
 -   While preprocessing files are quite similar across labs, **they must be run
     step by step**, as intermediate outputs will help determine necessary
     parameters for the library.
+- The preprocessing will results with a save "mse" (and possible "mse2") 
+  which are the preprocessed XcmsExperiment objects. These are resued throughout 
+  the rest of the process described below. 
 
 ### Library Building
 
@@ -51,6 +56,13 @@ as possible.
 > ⚠️ **Note:** The intermediate outputs from the library-building scripts are
 > not intended for direct use or inspection. Only the **final CSVs and plots**
 > are relevant for library review and finalization.
+
+- Library generation is in a `lig_gen_*.qmd` file will results in 2 files: 
+  - A `ring_trial_library_*.csv` file containing the generated library, 
+    with identified metabolites and their characteristics.
+  - A `std_spectra_*.mgf` file containing the MS/MS spectra of the identified 
+    metabolites in MGF format.
+      - This one is to be refined in some ways.
 
 ## Example and Generic Files
 
@@ -78,8 +90,8 @@ To support users in adapting the pipeline to their own data, we provide:
 
 ## Results 
 
-The lab comparison will be generated in the `results` folder, which will
-contain:
+The downstream lab comparison will be generated in the `results` folder, which
+will contain:
 
     - `lab_comparison.qmd`: A comprehensive comparison of results across all
       participating labs.
