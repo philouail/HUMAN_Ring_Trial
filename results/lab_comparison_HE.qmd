@@ -470,35 +470,100 @@ Gives us some kind of chromatographic fingerprint per lab.
 Instead of baseline shape, you’re summarizing where peaks are detected along 
 the gradient.
 
-```{r ratio-detect, eval = TRUE}
-ratio_all <- sapply(seq_along(tic_detect), function(i) {
-  rt <- rtime(tic_detect[i])[[1]]
-  int_tic <- log2(intensity(tic_detect[i])[[1]] + 1)  # +1 to avoid log2(0)
-  int_bpc <- log2(intensity(bpc_detected[i])[[1]] + 1)
-  
-  # Bin retention time into 30 equal slices
-  bins <- cut(rt, breaks = 30)
-  
-  # Compute median ratio BPC/TIC per bin
+```{r ratio-detect, eval = TRUE, fig.width=8, fig.height=10}
+# Compute median BPC/TIC ratio per RT bin
+compute_bin_ratio <- function(rt, int_tic, int_bpc, n_bins = 20) {
+  bins <- cut(rt, breaks = n_bins)
   tapply(seq_along(rt), bins, function(idx) {
     median(int_bpc[idx] / int_tic[idx], na.rm = TRUE)
   })
+}
+
+# Compute number of data points per RT bin
+compute_bin_count <- function(rt, n_bins = 30) {
+  bins <- cut(rt, breaks = n_bins)
+  tapply(seq_along(rt), bins, length)
+}
+
+# Preallocate containers
+ratio_all <- sapply(seq_along(tic_detect), function(i) {
+  rt <- rtime(tic_detect[i])[[1]]
+  int_tic <- intensity(tic_detect[i])[[1]]
+  int_bpc <- intensity(bpc_detected[i])[[1]]
+  
+  compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
 })
 
-colnames(ratio_all) <- paste(tic_detect$lab, tic_detect$mixture, "pol:", tic_detect$polarity, sep = "_")
-# Plot ratio for each mixture across labs
-# | fig.width: 12
-# | fig.height: 4
+coverage_all <- sapply(seq_along(tic_detect), function(i) {
+  rt <- rtime(tic_detect[i])[[1]]
+  compute_bin_count(rt, n_bins = 30)
+})
 
-mixtures <- unique(tic_detect$mixture)
-par(mfrow = c(1, 2))
+# Assign names
+colnames(ratio_all) <- paste(tic_detect$lab, tic_detect$mixture, "pol:", tic_detect$polarity, sep = "_")
+colnames(coverage_all) <- colnames(ratio_all)
+
+ylim_coverage <- c(0, max(coverage_all, na.rm = TRUE))
+xlim_coverage <- c(1, n_bins + 1)  # extra space at the end
+# Setup
+# 
+ylim_ratio <- range(ratio_all, na.rm = TRUE)
+xlim_ratio <- c(1, n_bins + 1)  # same extra space
+
+n_bins <- nrow(coverage_all)
+cols <- rainbow(n_samples)  # colors for the lines
+
 for (mix in mixtures) {
+  par(mfrow = c(2, 1), mar = c(3, 3, 2, 0))
   cols <- grep(mix, colnames(ratio_all))
-  matplot(ratio_all[, cols], type = "b", pch = 1
-    , xlab = "RT slices", ylab = "Median BPC/TIC ratio", main = paste("Mixture", mix))
- #  legend("topright", legend = colnames(ratio_all)[cols], col =
- # 1:length(cols), pch = 1)
+  tmp_ratio <- ratio_all[, cols]
+  tmp_coverage <- coverage_all[, cols]
+  
+  plot(tmp_coverage[, 1], type = "b", pch = 16, col = cols[1],
+       ylab = "Median BPC/TIC ratio", xlab = "", xaxt = "n",
+       ylim = ylim_coverage, xlim = xlim_coverage,
+       main = paste("Median BPC/TIC ratio per RT bin - Mixture", mix))
+  for (i in 2:ncol(tmp_coverage)) {
+    lines(tmp_coverage[, i], type = "b", pch = 16, col = cols[i])
+  }
+  grid()
+  
+  plot(tmp_ratio[, 1], type = "b", pch = 16, col = cols[1],
+       ylab = "Number of data points", xlab = "", xaxt = "n",
+       ylim = ylim_ratio, xlim = xlim_ratio,
+       main = paste("Number of data points per RT bin - Mixture", mix))
+  for (i in 2:ncol(tmp_ratio)) {
+    lines(tmp_ratio[, i], type = "b", pch = 16, col = cols[i])
+  }
+  axis(1, at = 1:n_bins, labels = rownames(tmp_ratio), las = 2, cex.axis = 0.8)
+  mtext("RT bin", side = 1, line = 4)
+  grid()
+  legend("top", legend_obj)
+    
 }
+
+
+col_info <- strsplit(colnames(coverage_all), "_")
+mixture_names <- sapply(col_info, `[`, 2)
+lab_names <- sapply(col_info, `[`, 1)
+unique_labs <- unique(lab_names)
+n_labs <- length(unique_labs)
+
+# Assign colors per lab
+cols_lab <- rainbow(n_labs)
+cols <- cols_lab[match(lab_names, unique_labs)] 
+
+legend_obj <- c(
+  x = "top", 
+  legend = unique_labs, 
+  col = cols_lab, 
+  pch = 16, 
+  horiz = TRUE, 
+  bty = "n", 
+  cex = 1.2)
+
+## for later similarity analysis i need to remove NA 
+ratio_all[is.na(ratio_all)] <- 0
 ```
 
 ## Chromatogram  Similarity
@@ -612,21 +677,22 @@ res_cembio <- read.csv(file.path("..", "cembio", "results",
 ```
 
 
-```{r, eval=I(!file.exists("object/sp_full_ann.RData"))}
-sp_afekta <- detect_signal(lab = "afekta", study_group = study_group,
-                           annotated = TRUE, bpparam = bpparam)
-sp_hmgu <- detect_signal(lab = "hmgu", study_group = study_group, 
-                         annotated = TRUE, bpparam = bpparam) 
-sp_icl <- detect_signal(lab = "icl", study_group = study_group, 
-                        annotated = TRUE, bpparam = bpparam)
-sp_cembio <- detect_signal(lab = "cembio", study_group = study_group, 
-                           annotated = TRUE, bpparam = bpparam)
-sp_full_ann <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio) 
-save(sp_full_ann, "object/sp_full_ann.RData")
-```
+```{r,}
+if (!file.exists("object/sp_full_ann.RData")) {
 
-```{r, eval=I(file.exists("object/sp_full_ann.RData"))}
-load("object/sp_full_ann.RData")
+  sp_afekta <- detect_signal(lab = "afekta", study_group = study_group,
+                             annotated = TRUE, bpparam = bpparam)
+  sp_hmgu <- detect_signal(lab = "hmgu", study_group = study_group, 
+                           annotated = TRUE, bpparam = bpparam) 
+  sp_icl <- detect_signal(lab = "icl", study_group = study_group, 
+                          annotated = TRUE, bpparam = bpparam)
+  sp_cembio <- detect_signal(lab = "cembio", study_group = study_group, 
+                             annotated = TRUE, bpparam = bpparam)
+  sp_full_ann <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio) 
+  save(sp_full_ann, "object/sp_full_ann.RData")
+} else {
+  load("object/sp_full_ann.RData")
+}
 ```
 
 ```{r}
@@ -649,16 +715,16 @@ lapply(split(rtime(sp_full_ann), sp_full_ann$lab) , range)
 
 ### Base Peak Chromatogram (BPC) area
 
-```{r, eval=I(!file.exists("object/bpc_ann.RData"))}
-bpc_ann <- Chromatograms(sp_full_ann, summarize.method = "max",
-                     factorize.by= "dataOrigin",
-                     spectraVariables = c("mixture", "lab"))
-bpc_ann <- setBackend(bpc_ann, ChromBackendMemory())
-save(file = "object/bpc_ann.RData", bpc_ann)
-```
-
-```{r, eval= I(file.exists("object/bpc_ann.RData"))}
-load("object/bpc_ann.RData")
+```{r}
+if (!file.exists("object/bpc_ann.RData")) {
+  bpc_ann <- Chromatograms(sp_full_ann, summarize.method = "max",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab"))
+  bpc_ann <- setBackend(bpc_ann, ChromBackendMemory())
+  save(file = "object/bpc_ann.RData", bpc_ann)
+} else {
+  load("object/bpc_ann.RData")
+}
 ```
 
 We summarize the BPC area per mixture per lab by summing the intensity values.
@@ -677,18 +743,17 @@ cv_per_mix_det <- tapply(sbpc, bpc_ann$mixture, function(x)
 
 ### Total Ion Current (TIC) area
 
-```{r, eval=I(!file.exists("object/tic_ann.RData"))}
-tic_ann <- Chromatograms(sp_full_ann, summarize.method = "sum",
-                     factorize.by= "dataOrigin",
-                     spectraVariables = c("mixture", "lab")) 
-tic_ann <- setBacken  d(tic_ann, ChromBackendMemory())
-save(file = "object/tic_ann.RData", tic_ann)
-```
-
 ```{r}
-load("object/tic_ann.RData")
+if (!file.exists("object/tic_ann.RData")) {
+  tic_ann <- Chromatograms(sp_full_ann, summarize.method = "sum",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab")) 
+  tic_ann <- setBackend(tic_ann, ChromBackendMemory())
+  save(file = "object/tic_ann.RData", tic_ann)
+} else {
+  load("object/tic_ann.RData")
+}
 ```
-
 
 We summarize the TIC area per mixture per lab by summing the intensity values.
 
@@ -715,37 +780,89 @@ vioplot(ratio_bpc_tic ~ tic_full$lab,
 Gives us some kind of chromatographic fingerprint per lab.
 
 ```{r}
-ratio_all <- sapply(seq_along(tic_ann), function(i) {
-  rt <- rtime(tic_ann[i])[[1]]
-  int_tic <- log2(intensity(tic_ann[i])[[1]] + 1)  # +1 to avoid log2(0)
-  int_bpc <- log2(intensity(bpc_ann[i])[[1]] + 1)
+# Preallocate containers
+ratio_all <- sapply(seq_along(tic_detect), function(i) {
+  rt <- rtime(tic_detect[i])[[1]]
+  int_tic <- intensity(tic_detect[i])[[1]]
+  int_bpc <- intensity(bpc_detected[i])[[1]]
   
-  # Bin retention time into 30 equal slices
-  bins <- cut(rt, breaks = 30)
-  
-  # Compute median ratio BPC/TIC per bin
-  tapply(seq_along(rt), bins, function(idx) {
-    median(int_bpc[idx] / int_tic[idx], na.rm = TRUE)
-  })
+  compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
 })
-```
 
-```{r}
-colnames(ratio_all) <- paste(tic_ann$lab, tic_ann$mixture, "pol:", tic_ann$polarity, sep = "_")
-# Plot ratio for each mixture across labs
-# | fig.width: 12
-# | fig.height: 4
+coverage_all <- sapply(seq_along(tic_detect), function(i) {
+  rt <- rtime(tic_detect[i])[[1]]
+  compute_bin_count(rt, n_bins = 30)
+})
 
-mixtures <- unique(tic_ann$mixture)
-par(mfrow = c(1, 2))
+# Assign names
+colnames(ratio_all) <- paste(tic_detect$lab, 
+                             tic_detect$mixture, "pol:", tic_detect$polarity, sep = "_")
+colnames(coverage_all) <- colnames(ratio_all)
+
+ylim_coverage <- c(0, max(coverage_all, na.rm = TRUE))
+xlim_coverage <- c(1, n_bins + 1)  # extra space at the end
+# Setup
+# 
+ylim_ratio <- range(ratio_all, na.rm = TRUE)
+xlim_ratio <- c(1, n_bins + 1)  # same extra space
+
+n_bins <- nrow(coverage_all)
+cols <- rainbow(n_samples)  # colors for the lines
+
 for (mix in mixtures) {
+  par(mfrow = c(2, 1), mar = c(3, 3, 2, 0))
   cols <- grep(mix, colnames(ratio_all))
-  matplot(ratio_all[, cols], type = "b", pch = 1
-    , xlab = "RT slices", ylab = "Median BPC/TIC ratio", main = paste("Mixture", mix))
- #  legend("topright", legend = colnames(ratio_all)[cols], col =
- # 1:length(cols), pch = 1)
+  tmp_ratio <- ratio_all[, cols]
+  tmp_coverage <- coverage_all[, cols]
+  
+  plot(tmp_coverage[, 1], type = "b", pch = 16, col = cols[1],
+       ylab = "Median BPC/TIC ratio", xlab = "", xaxt = "n",
+       ylim = ylim_coverage, xlim = xlim_coverage,
+       main = paste("Median BPC/TIC ratio per RT bin - Mixture", mix))
+  for (i in 2:ncol(tmp_coverage)) {
+    lines(tmp_coverage[, i], type = "b", pch = 16, col = cols[i])
+  }
+  grid()
+  
+  plot(tmp_ratio[, 1], type = "b", pch = 16, col = cols[1],
+       ylab = "Number of data points", xlab = "", xaxt = "n",
+       ylim = ylim_ratio, xlim = xlim_ratio,
+       main = paste("Number of data points per RT bin - Mixture", mix))
+  for (i in 2:ncol(tmp_ratio)) {
+    lines(tmp_ratio[, i], type = "b", pch = 16, col = cols[i])
+  }
+  axis(1, at = 1:n_bins, labels = rownames(tmp_ratio), 
+       las = 2, cex.axis = 0.8)
+  mtext("RT bin", side = 1, line = 4)
+  grid()
+  legend("top", legend_obj)
+    
 }
+
+
+col_info <- strsplit(colnames(coverage_all), "_")
+mixture_names <- sapply(col_info, `[`, 2)
+lab_names <- sapply(col_info, `[`, 1)
+unique_labs <- unique(lab_names)
+n_labs <- length(unique_labs)
+
+# Assign colors per lab
+cols_lab <- rainbow(n_labs)
+cols <- cols_lab[match(lab_names, unique_labs)] 
+
+legend_obj <- c(
+  x = "top", 
+  legend = unique_labs, 
+  col = cols_lab, 
+  pch = 16, 
+  horiz = TRUE, 
+  bty = "n", 
+  cex = 1.2)
+
+## for later similarity analysis i need to remove NA 
+ratio_all[is.na(ratio_all)] <- 0
 ```
+
 
 ## Chromatogram  Similarity
 
@@ -756,7 +873,8 @@ for (mix in mixtures) {
 ```{r}
 full_int <- intensity(tic_ann)
 
-sim_matrix <- matrix(NA, ncol = length(full_int), nrow = length(full_int))
+sim_matrix <- matrix(NA, ncol = length(full_int), 
+                     nrow = length(full_int))
 
 for (i in seq_along(full_int)) {
   for (j in seq_along(full_int)) {
@@ -774,7 +892,8 @@ plot(hc, labels = paste(tic_ann$lab, tic_ann$mixture, sep = "_"),
      main = "DTW clustering of TIC")
 
 # heatmap 
-heatmap(sim_matrix, labRow = paste(tic_ann$lab, tic_ann$mixture, sep = "_"),
+heatmap(sim_matrix, labRow = paste(tic_ann$lab, 
+                                   tic_ann$mixture, sep = "_"),
   labCol = paste(tic_ann$lab, tic_ann$mixture, sep = "_"), 
   main = "DTW similarity of TIC")
 ```
@@ -784,12 +903,14 @@ heatmap(sim_matrix, labRow = paste(tic_ann$lab, tic_ann$mixture, sep = "_"),
 ```{r}
 full_int <- intensity(bpc_ann)
 
-sim_matrix <- matrix(NA, ncol = length(full_int), nrow = length(full_int))
+sim_matrix <- matrix(NA, ncol = length(full_int),
+                     nrow = length(full_int))
 
 for (i in seq_along(full_int)) {
   for (j in seq_along(full_int)) {
     if (is.na(sim_matrix[i, j])) {
-      dtw_res <- dtw(full_int[[i]], full_int[[j]], keep = FALSE)
+      dtw_res <- dtw(full_int[[i]], full_int[[j]],
+                     keep = FALSE)
       sim_matrix[i, j] <- dtw_res$normalizedDistance
       sim_matrix[j, i] <- sim_matrix[i, j]
     }
@@ -798,11 +919,14 @@ for (i in seq_along(full_int)) {
 
 # cluster 
 hc <- hclust(as.dist(sim_matrix))
-plot(hc, labels = paste(bpc_ann$lab, bpc_ann$mixture, sep = "_"), 
+plot(hc, labels = paste(bpc_ann$lab, bpc_ann$mixture, 
+                        sep = "_"), 
      main = "DTW clustering of TIC")
 
 # heatmap 
-heatmap(sim_matrix, labRow = paste(bpc_ann$lab, bpc_ann$mixture, sep = "_"),
+heatmap(sim_matrix, labRow = paste(bpc_ann$lab,
+                                   bpc_ann$mixture,
+                                   sep = "_"),
   labCol = paste(bpc_ann$lab, bpc_ann$mixture, sep = "_"), 
   main = "DTW similarity of BPC")
 ```
@@ -811,11 +935,13 @@ heatmap(sim_matrix, labRow = paste(bpc_ann$lab, bpc_ann$mixture, sep = "_"),
 ### ratio along retention time.
 
 ```{r}
-sim_matrix_med <- matrix(NA, ncol = ncol(ratio_all), nrow = ncol(ratio_all))
+sim_matrix_med <- matrix(NA, ncol = ncol(ratio_all), 
+                         nrow = ncol(ratio_all))
 for (i in seq_len(ncol(ratio_all))) {
   for (j in seq_len(ncol(ratio_all))) {
     if (is.na(sim_matrix_med[i, j])) {
-      dtw_res <- dtw(ratio_all[, i], ratio_all[, j], keep = FALSE)
+      dtw_res <- dtw(ratio_all[, i], ratio_all[, j], 
+                     keep = FALSE)
       sim_matrix_med[i, j] <- dtw_res$normalizedDistance
       sim_matrix_med[j, i] <- sim_matrix_med[i, j]
     }
@@ -829,7 +955,8 @@ plot(hc_med, labels = colnames(ratio_all),
 
 # heatmap
 heatmap(sim_matrix_med, labRow = colnames(ratio_all),
-  labCol = colnames(ratio_all), main = "DTW similarity of BPC/TIC ratio")
+  labCol = colnames(ratio_all), 
+  main = "DTW similarity of BPC/TIC ratio")
 ```
 
 
@@ -851,7 +978,6 @@ dif_int2 <- stic_full - stic_ann
 vioplot(log2(dif_int2) ~ tic_full$lab, 
         ylab = "Total - detected TIC area", 
         xlab = "Lab")
-
 ```
 
 -   total signal - annotated peak signal
@@ -867,7 +993,8 @@ vioplot(log2(dif_int3) ~ tic_full$lab,
 
 - detected - annotated peak signal
 
-This describe some "other signal": othger adduct, fragmentation, ...
+This describe some "other signal": together adduct,
+fragmentation, ...
 
 ```{r}
 dif_int4 <- stic_detect - stic_ann

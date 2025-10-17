@@ -304,7 +304,7 @@ match_res <- update_all_with_rti(list_res$data, mse, naps_res)
 match_res <- lapply(split(match_res, match_res$target_ChEBI.name),
                       function(z) {
     rts  <- chromPeaks(mse)[z$chrom_peak_id, "rt"]
-    param <- SimilarRtimeParam(diffRt = 10, groupFun = groupClosest)
+    param <- SimilarRtimeParam(diffRt = 10, groupFun = MsCoreUtils::group)
     groups <- groupFeatures(rts, param)
     z$rt <- rts
     z$rt_regions <- as.numeric(groups)
