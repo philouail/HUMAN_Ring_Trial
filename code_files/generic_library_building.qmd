@@ -125,7 +125,6 @@ mse <- readMsObject(XcmsExperiment(),
 sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
 
-
 sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
 meta$Mixture <- gsub("\\.", "_", meta$Mixture)
 ```

@@ -146,7 +146,7 @@ mse <- filterRt(mse, rt = c(18, 720))
 
 # Estimate peak-picking parameters on ONE file.
 
-```{r, eval=FALSE}
+```{r, eval = TRUE}
 x_meta <-  split(meta, meta$Mixture)[[1]]
 idx_sample <- which(sampleData(mse)$sample_type == "sample")[1]
 x_mse <- mse[idx_sample]
@@ -157,7 +157,7 @@ x_mse <- mse[idx_sample]
 Using theoretical m/z for both main positive adducts and all along the
 retention time.
 
-```{r, eval=FALSE}
+```{r, eval = TRUE}
 #| code-fold: true
 #| code-summary: "Show the code"
 
@@ -381,12 +381,18 @@ mse <- mse[sampleData(mse)$sample_type == "sample"]
 if (length(unique(sampleData(mse)$ms_level)) > 1) {
     mse2 <- mse[sampleData(mse)$ms_level == 2]
     mse <- mse[sampleData(mse)$ms_level == 1]
-    saveMsObject(mse2,
-             AlabasterParam(path = file.path("results", study_group, "mse2")))
-    saveMsObject(mse,
-             AlabasterParam(path = file.path("results", study_group,"mse")))
+    fl <- file.path("results", study_group, "mse2")
+    if (file.exists(fl))
+        unlink(fl, recursive = TRUE)
+    saveMsObject(mse2, AlabasterParam(path = fl))
+    fl <- file.path("results", study_group, "mse")
+    if (file.exists(fl))
+        unlink(fl, recursive = TRUE)
+    saveMsObject(mse, AlabasterParam(path = fl))
 } else {
-    saveMsObject(mse,
-             AlabasterParam(path = file.path("results", study_group,"mse")))
+    fl <- file.path("results", study_group, "mse")
+    if (file.exists(fl))
+        unlink(fl, recursive = TRUE)
+    saveMsObject(mse, AlabasterParam(path = fl))
 }
 ```
