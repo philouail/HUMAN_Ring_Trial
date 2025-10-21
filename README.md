@@ -14,6 +14,40 @@ LC-MS methods across various laboratories:
 2.  **HUMAN Reference Method**: All labs also analyze the same mixtures using a
     standardized method, with a common column and gradient.
 
+
+```mermaid
+---
+config:
+  look: handDrawn
+---
+graph LR
+    subgraph **Preprocessing**
+        A[Raw .mzML Files & Metadata] --> B{Data Loading};
+        B --> C{Peak Picking <br> using xcms};
+        C --> D{Alignment <br> using NAPS};
+        D --> E[Processed XcmsExperiment Object];
+    end
+    subgraph **Library Building**
+        E --> F{MS1 Matching <br> to Adducts};
+        F --> G{Isotope Pattern <br> Matching};
+        F --> H{MS2 Annotation <br> vs. GNPS};
+        G --> I{RT Grouping};
+        H --> I;
+        I --> J[Annotated Features Table];
+    end
+    subgraph **Library Generation**
+        J --> K{"Manual Curation <br> (Select TRUE values)"};
+        K --> L{Filter by Lowest <br> PPM Error};
+        L --> M["Final MS1 Library <br> (ring_trial_library_*.csv)"];
+        L --> N["Final MS2 Library <br> (std_spectra_*.mgf)"];
+    end
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style E fill:#ccf,stroke:#333,stroke-width:2px
+    style J fill:#cfc,stroke:#333,stroke-width:2px
+    style M fill:#fcf,stroke:#333,stroke-width:2px
+    style N fill:#fcf,stroke:#333,stroke-width:2px
+```
+
 ### Experimental Design
 
 -   A total of **83 mixtures** from the MetaSci metabolite standard library will
@@ -101,5 +135,26 @@ will contain:
       comparison analysis.
     - `objects/`: A directory for storing intermediate objects used in the lab
       comparison analysis.
+
+```mermaid
+---
+config:
+  look: handDrawn
+---
+graph TD
+    subgraph "Lab Comparison Analysis"
+        E[Processed Data] --> O{Full Data Analysis};
+        E --> P{Detected Signal Analysis};
+        M[Annotated Library] --> Q{Annotated Signal Analysis};
+        O --> R[TIC/BPC Metrics & Similarity];
+        P --> R;
+        Q --> S{"Peak Feature Analysis <br> (Area, Height, Tailing Factor)"};
+        S --> T[PCA & Inter-Lab Performance Metrics];
+    end
+
+    style E fill:#ccf,stroke:#333,stroke-width:2px
+    style M fill:#fcf,stroke:#333,stroke-width:2px
+    style T fill:#ffc,stroke:#333,stroke-width:2px
+```
 
 
