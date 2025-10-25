@@ -110,7 +110,7 @@ setup.R file.
 
 ```{r}
 study_group <- "HE" #example HE / FE / Others
-dr <- file.path("results",study_group)
+dr <- file.path("results", study_group)
 
 source("setup.R")
 ```
@@ -121,10 +121,13 @@ chromatographic peaks detected.
 ```{r}
 mse <- readMsObject(XcmsExperiment(), 
             AlabasterParam(path = file.path(dr, "mse")), 
-            spectraPath = file.path(paste0( study_group, "_mzml/"))) 
-sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$files)
+            spectraPath = file.path(paste0( study_group, "_mzml/")))
+sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 sampleData(mse)$mixture <- sub("\\.mzML", "", sampleData(mse)$mixture)
 meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
+
+sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
+meta$Mixture <- gsub("\\.", "_", meta$Mixture)
 ```
 
 ## Identify chrom peaks matching ions/adducts of the standards
@@ -155,7 +158,7 @@ list_res <- extract_ms1_adduct_info(match_ms1, match_res)
 
 We plot these to file. An example plot is shown below.
 
-```{r, eval=FALSE}}
+```{r, eval = TRUE}
 #' Plot all
 for (i in seq_along(list_res$spectra)) {
     a <- list_res$spectra[i]
@@ -212,11 +215,12 @@ If you have separated MS2 spectra in the pre-processing step, you load it below
 mse2 <- readMsObject(XcmsExperiment(), 
             AlabasterParam(path = file.path(dr, "mse2")), 
             spectraPath = file.path(paste0( study_group, "_mzml/")))
-sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse)$files)
+sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 sampleData(mse2)$mixture <- sub("\\.mzML", "", sampleData(mse)$mixture)
+sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
+
 ms2peaks <- automate_matching_ms2(mse2, list_res$data, toleranceMz = 0.1,
                                   toleranceRt = 5)
-
 ```
 
 ```{r}
@@ -244,7 +248,7 @@ ms2peaks <- setBackend(backend = MsBackendMemory(), object = ms2peaks)
 ms2peaks <- applyProcessing(ms2peaks)
 
 # ref DB
-dbfile <- "MsBackendSql.GNPS.matchms.cleaned.v1.sqlite"
+dbfile <- "../MsBackendSql.GNPS.matchms.cleaned.v1.sqlite"
 con <- dbConnect(SQLite(), dbfile)
 ms2_ref <- Spectra(con, source = MsBackendSql())
 pol <- unique(spectraData(ms2peaks)$polarity)
