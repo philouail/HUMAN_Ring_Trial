@@ -368,7 +368,10 @@ automate_matching_ms2 <- function(mse2, match_res, toleranceMz = 0.1,
                            sampleData(mse2)$polarity == "pos"]
 
         sp <- spectra(x_mse2)
-        if (waters_data) sp$precursorMz <- estimatePrecursorMz(sp)
+        if (waters_data) {
+            sp$original_precursorMz <- sp$precursorMz
+            sp$precursorMz <- estimatePrecursorMz(sp)
+        }
         sp <- filterMsLevel(sp, 2)
 
         sp_filt <- apply(as.matrix(target),

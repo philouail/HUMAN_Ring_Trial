@@ -76,7 +76,7 @@ names(col_sample_type)[seq_along(unique(sampleData(mse_pos)$sample_type))] <-
 
 Suggestion to extract the BPC of all samples and plot them, all in one. BPC
 
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 #| fig-height: 8
 #| fig-width: 6
 bpc_pos <- chromatogram(mse_pos, aggregationFun = "max")
@@ -113,7 +113,7 @@ individually.
 The intensity could be a limitation if it is too diluted, and in the general
 BPC we cannot see them properly. 
 
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 idx_NAPS <- sampleData(mse_pos)$sample_type == "NAPS"
 bpc_pos_naps <- chromatogram(mse_pos[idx_NAPS], aggregationFun = "max")
 plot(bpc_pos_naps, col = paste0(col_sample_type[bpc_pos_naps$sample_type], 80))
@@ -128,7 +128,7 @@ Observations: as the peak shape in negative looks like they are coeluting,
 I am going to plot the EIC of NAPS from 14-18 to determinate if it is a plotting
 issue or if compounds are eluting. 
 
-```{r, eval=FALSE, eic-naps-neg}
+```{r, eval=TRUE, eic-naps-neg}
 #' get the list of NAPS EXACT MASS
 NAPS_info <- read_xlsx("NAPS_info.xlsx")|> as.data.frame()
 rownames(NAPS_info) <- NAPS_info$Name
@@ -210,9 +210,9 @@ Below decide if want to filter retention time (method dependent), if yes run:
 mse <- filterRt(mse, rt = c(18, 720)) ## change c(0,60) to your settings
 ```
 
-# Estimate peak-picking parameters on ONE file.
+# Estimate peak-picking parameters on ONE file
 
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 x_meta <-  split(meta, meta$Mixture)[[1]]
 idx_sample <- which(sampleData(mse)$sample_type == "sample")[1]
 x_mse <- mse[idx_sample]
@@ -226,7 +226,7 @@ i.e. 1 is mixtures 1, not blank. Look at mixture column created.
 Using theoretical m/z for both main positive adducts and all along the
 retention time.
 
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 #| code-fold: true
 #| code-summary: "Show the code"
 
@@ -381,7 +381,6 @@ lengths(cst) ### the output here should look a bit like "1 1 1 1 1 "
 ```
 
 
-
 ```{r, eval=FALSE}
 #' Calculate the difference in m/z values between scans
 mz_diff <- cst |>
@@ -501,7 +500,7 @@ Observations: Some warnings appeared (Retention times are not increasingly
 ordered for sample 5). This was addressed to samples 3, 4, 5, 6 in pos and 5 in 
 negative. 
 
-```{r import_NAPS_filtered, eval = FALSE}
+```{r import_NAPS_filtered, eval = TRUE}
 NAPS_filtered <- read.csv("results/HE/naps_manual.csv")|> as.data.frame()
 NAPS_filtered <- NAPS_filtered[, -c(1:11)]
 rtmatrix_f <- as.matrix(NAPS_filtered)
@@ -542,6 +541,7 @@ plotAdjustedRtime(
 
 mse <- applyAdjustedRtime(mse)
 ```
+
 Observations: There is an adjustment of > -100 seconds (1.5min) which means 
 something is happening with the naps. For that, in the exported csv of detected
 features in NAPS samples, NAPS_POS_4 presents NA values up to C9. After C10 it 
@@ -550,7 +550,7 @@ we can see it has a normal peak shape and rt separation between compounds. As
 NAPS-1 showed good separation features detection, I will compare the BPC as a 
 reference with the NAPS-4-BPc. 
 
-```{r, eval=FALSE, visualisation-NAPS-1-4}
+```{r, eval=TRUE, visualisation-NAPS-1-4}
 bpc_naps_pos_4 <- chromatogram(mse_pos[29], aggregationFun = "max")
 plot(bpc_naps_pos_4, col = paste0(col_sample_type[bpc_naps_pos_4$sample_type], 80),
      main = "NAPS_POS_4")
@@ -561,7 +561,7 @@ plot(bpc_naps_pos_1, col = paste0(col_sample_type[bpc_naps_pos_1$sample_type], 8
 grid()
 ```
 
-```{r, eval=FALSE, visualisation-NAPS}
+```{r, eval=TRUE, visualisation-NAPS}
 bpc_naps_pos_1_4 <- chromatogram(mse_pos[c(2, 29)], aggregationFun = "max")
 plot(bpc_naps_pos_1_4, col = paste0(col_sample_type[bpc_naps_pos_1_4$sample_type], 80),
      main = "NAPS_POS 1 and 4")
@@ -569,7 +569,8 @@ grid()
 ```
 Observations: Also, NAPS_NEG_ 5, 6 are off in mz so I will visualise them as 
 well with NAPS_NEG_1 as reference. 
-```{r, eval=FALSE, visualisation-NAPS-Neg}
+
+```{r, eval=TRUE, visualisation-NAPS-Neg}
 bpc_naps_neg_1_5_6 <- chromatogram(mse_neg[c(2, 38, 45)], aggregationFun = "max")
 plot(bpc_naps_neg_1_5_6, col = paste0(col_sample_type[bpc_naps_neg_1_5_6$sample_type], 80), 
      main = "NAPS_NEG_5_6")
