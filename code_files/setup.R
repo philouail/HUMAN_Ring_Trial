@@ -1,3 +1,6 @@
+## check for update - run this at least one at the beginning of the week
+#BiocManager::install()
+
 ## Package load
 library(readxl)
 library(S4Vectors)
@@ -15,14 +18,15 @@ library(MsCoreUtils)
 library(RSQLite)
 library(MsBackendSql)
 library(MsFeatures)
+library(pander)
 
-meta <- read_xlsx(paste0("../shared_data/standards.xlsx"),
+meta <- read_xlsx(paste0("standards.xlsx"),
                   col_names = TRUE, skip = 1, .name_repair = "minimal") |>
     as.data.frame(check.names = FALSE)
 
 meta$M <- as.numeric(meta$M)
 
-#' #' logp standard
+#' #' logp standard - not running this anymore
 #' library(rcdk)
 #' parsed <- parse.smiles(meta$SMILES)
 #' logP <- vapply(parsed, get.xlogp, FUN.VALUE = numeric(1))
@@ -128,13 +132,13 @@ automate_matching <- function(meta, mse) {
         match_neg <- match_neg[whichQuery(match_neg)]
 
         # Extract results
-        match_res_pos <- matchedData(match_pos, c("chrom_peak_id","mz", "rt", "rtmin", "rtmax", "into",
+        match_res_pos <- matchedData(match_pos, c("chrom_peak_id","mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax", "into",
                                                   "target_ChEBI name", "target_ChEBI", "target_InChIKey",
                                                   "target_formula", "target_M", "adduct", "score", "ppm_error")) |>
             as.data.frame()
         match_res_pos$polarity <- "pos"
 
-        match_res_neg <- matchedData(match_neg, c("chrom_peak_id", "mz", "rt", "rtmin", "rtmax", "into",
+        match_res_neg <- matchedData(match_neg, c("chrom_peak_id", "mz", "rt",  "mzmin", "mzmax", "rtmin", "rtmax", "into",
                                                   "target_ChEBI name", "target_ChEBI", "target_InChIKey",
                                                   "target_formula", "target_M", "adduct", "score", "ppm_error")) |>
             as.data.frame()
@@ -183,15 +187,13 @@ extract_ms1_adduct_info <- function(ms1_spectra, match_df) {
         else
             mzs <- sort(mass2mz(z$exactmass, adductNames("negative"))[1, ])
         z <- filterMzValues(z, mzs, ppm = 10)
-        idx <- MsCoreUtils::closest(mz(z)[[1L]], mzs)
+        idx <- MsCoreUtils::closest(mz(z)[[1L]], mzs, duplicates = "closest")
         z$peak_adduct_name <- list(names(mzs)[idx])
         z <- applyProcessing(z)
-        z
         z
     })
     adducts_combined <- concatenateSpectra(adducts_detected)
 
-    adduct_count <- lengths(adducts_detected)
     ## In addition we add the number of adducts that have an intensity >= 0.5 the
     ## intensity of the chrom peak's intensity
     adduct_05 <- spectrapply(adducts_combined, function(z) {
@@ -200,7 +202,7 @@ extract_ms1_adduct_info <- function(ms1_spectra, match_df) {
         sum(intensity(z)[[1L]] >= 0.5 * intensity(z)[[1L]][idx])
     }) |> unlist()
 
-    match_df$ms1_adduct_count <- adduct_count
+    match_df$ms1_adduct_count <- lengths(adducts_combined)
     match_df$ms1_adduct_05_count <- adduct_05
     list(data = match_df, spectra = adducts_combined)
 }
@@ -333,4 +335,74 @@ update_all_with_rti <- function(match_res, mse, naps_res, polarities = c("pos", 
     return(match_res)
 }
 
-## other ?
+
+#' @title Automated MS2 matching
+#' @description This function automates the matching of MS2 spectra to
+#' chromatographic peaks based on the provided match results.
+#' @param mse2 An `XcmsExperiment` object containing the MS2 spectra.
+#' @param match_res A data frame containing the match results from the
+#' `automate_matching` function.
+#' @param toleranceMz A numeric value representing the m/z tolerance for
+#' matching. Default is 0.1.
+#' @param toleranceRt A numeric value representing the retention time
+#' tolerance for matching. Default is 5 seconds.
+#' @return A list of matched MS2 spectra for each mixture.
+automate_matching_ms2 <- function(mse2, match_res, toleranceMz = 0.1,
+                                  toleranceRt = 5, waters_data = FALSE) {
+    all_matches <- list()
+    mixtures <- unique(match_res$mixture)
+    ## fix precursorMz
+
+    for (x in mixtures) {
+
+        #positive mode
+        target <- match_res[match_res$mixture == x & match_res$polarity == "pos",
+                            c("rtmin", "rtmax", "mzmin", "mzmax")]
+
+        target$rtmin <- target$rtmin - toleranceRt
+        target$rtmax <- target$rtmax + toleranceRt
+        target$mzmin <- target$mzmin - toleranceMz
+        target$mzmax <- target$mzmax + toleranceMz
+
+        x_mse2 <- mse2[sampleData(mse2)$mixture == x &
+                           sampleData(mse2)$polarity == "pos"]
+
+        sp <- spectra(x_mse2)
+        if (waters_data) sp$precursorMz <- estimatePrecursorMz(sp)
+        sp <- filterMsLevel(sp, 2)
+
+        sp_filt <- apply(as.matrix(target),
+                         MARGIN = 1, FUN = filterRanges, object = sp,
+                         spectraVariables = c("rtime", "precursorMz"))
+        l <- lengths(sp_filt)
+        sp_filt <- concatenateSpectra(sp_filt)
+        sp_filt$chrom_peak_id <- rep(names(l), l)
+
+        ## negative
+        target <- match_res[match_res$mixture == x & match_res$polarity == "neg",
+                            c("rtmin", "rtmax", "mzmin", "mzmax")]
+        target$rtmin <- target$rtmin - toleranceRt
+        target$rtmax <- target$rtmax + toleranceRt
+        target$mzmin <- target$mzmin - toleranceMz
+        target$mzmax <- target$mzmax + toleranceMz
+        x_mse2 <- mse2[sampleData(mse2)$mixture == x &
+                           sampleData(mse2)$polarity == "neg"]
+        sp <- spectra(x_mse2)
+        if (waters_data) sp$precursorMz <- estimatePrecursorMz(sp)
+        sp <- filterMsLevel(sp, 2)
+        sp_filt_neg <- apply(as.matrix(target),
+                             MARGIN = 1, FUN = filterRanges, object = sp,
+                             spectraVariables = c("rtime", "precursorMz"))
+        l <- lengths(sp_filt_neg)
+        sp_filt_neg <- concatenateSpectra(sp_filt_neg)
+        sp_filt_neg$chrom_peak_id <- rep(names(l), l)
+        sp_filt <- c(sp_filt, sp_filt_neg)
+
+        ## add to list
+
+        all_matches[[x]] <- sp_filt
+
+    }
+    all_sp <- concatenateSpectra(all_matches)
+    return(all_sp)
+}

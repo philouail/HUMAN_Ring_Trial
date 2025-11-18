@@ -1,7 +1,7 @@
 ---
 title: "Generic Library Building Script"
 format: html
-editor: visual
+editor: source
 ---
 
 # Library building
@@ -35,20 +35,18 @@ This will be run AFTER pre-processing the data.
 -   MS2 match scores
 -   reference match validity (true positive?)
 
-6)  Then user can make a decision on the compound identity based on the evidence
-    and the confidence level of the match.
+6)  Then user can make a decision on the compound identity based on the
+    evidence and the confidence level of the match.
 
 Confidence level
 
 | Evidence Type | Confidence | Notes |
-|----|----|----|
+|--------------------------|--------------------------|--------------------------|
 | m/z match | Low | Base assumption; needed but not sufficient |
 | Isotope pattern match | Medium-Low | Confirms formula, not structure |
 | Multiple ion detection | Medium | Stronger signal, especially across adducts |
 | MS2 match to reference | High | Most powerful, but dependent on library coverage |
 | LogP shift (optional) | Exploratory | NAPS-based RT shift logic (experimental) |
-
-### fix this !!
 
 ```{r}
 #| code-fold: true
@@ -107,11 +105,14 @@ digraph compound_analysis {
 
 ## set up
 
-```{r}
-study_group <- "HE" #example HE / FE / Others
-dr <- file.path("results",study_group) ## adapt this
+To simplify this workflow function have been created and can be found in the
+setup.R file.
 
-source("../code_files/setup.R")
+```{r, message=FALSE}
+study_group <- "HE" #example HE / FE / Others
+dr <- file.path("results", study_group)
+
+source("setup.R")
 ```
 
 Below I load the files that have been preprocessed. There they have
@@ -120,9 +121,12 @@ chromatographic peaks detected.
 ```{r}
 mse <- readMsObject(XcmsExperiment(), 
             AlabasterParam(path = file.path(dr, "mse")), 
-            spectraPath = file.path("HE_mzml/"))
+            spectraPath = file.path(paste0( study_group, "_mzml/"))) 
 sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
+
+sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
+meta$Mixture <- gsub("\\.", "_", meta$Mixture)
 ```
 
 ## Identify chrom peaks matching ions/adducts of the standards
@@ -147,8 +151,8 @@ match_ms1 <- chromPeakSpectra(
     method = "closest_rt") 
 
 list_res <- extract_ms1_adduct_info(match_ms1, match_res)
-list_res$data
-list_res$spectra
+# list_res$data
+# list_res$spectra
 ```
 
 We plot these to file. An example plot is shown below.
@@ -204,16 +208,42 @@ for (i in seq_along(list_res$spectra)) {
 
 ## Process each chrompeaks MS2 annotation
 
+If you have separated MS2 object in the pre-processing step, you load it below.
+If you recorded MS1 and MS2 together DO NOT run the code below. 
+Also if you have waters data, change the parameter "waters_data" to TRUE.
+
+```{r, load-MS2-data}
+mse2 <- readMsObject(XcmsExperiment(), 
+            AlabasterParam(path = file.path(dr, "mse2")), 
+            spectraPath = file.path(paste0( study_group, "_mzml/")))
+sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
+sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
+
+ms2peaks <- automate_matching_ms2(mse2, list_res$data, toleranceMz = 0.1,
+                                  toleranceRt = 5, waters_data = FALSE) ## very slow if TRUE, but important if you have waters data.
+```
+
+if you ran the MS1 and MS2 data togeher, run the following code to extract MS2 
+spectra from the chromatographic peaks. People that have recorded MS2 and MS1 
+separately DO NOT run the chunk below. 
+
 ```{r}
 ms2peaks <- chromPeakSpectra(mse, method = "all", 
                              expandRt = 2, expandMz = 0.01, 
                              peaks = rownames(list_res$data) ,
                              chromPeakColumns = c("rt", "mz", "mzmin",
                                                   "mzmax", "rtmin", "rtmax",
-                                                  "into")) 
+                                                  "into"))
+```
+
+Below we count the number of MS2 detected per chromatographic peak.
+
+```{r}
 cnts <- table(ms2peaks$chrom_peak_id)
 list_res$data[names(cnts), "ms2_count"] <- as.integer(cnts)
+```
 
+```{r}
 #' Process spectra
 low_int <- function(x, ...) {
     x > max(x, na.rm = TRUE) * 0.05
@@ -226,10 +256,11 @@ ms2peaks <- setBackend(backend = MsBackendMemory(), object = ms2peaks)
 ms2peaks <- applyProcessing(ms2peaks)
 
 # ref DB
-dbfile <- "../shared_data/MsBackendSql.GNPS.matchms.cleaned.v1.sqlite"
+dbfile <- "MsBackendSql.GNPS.matchms.cleaned.v1.sqlite"
 con <- dbConnect(SQLite(), dbfile)
 ms2_ref <- Spectra(con, source = MsBackendSql())
-ms2_ref <- ms2_ref[ms2_ref$polarity == 1]
+pol <- unique(spectraData(ms2peaks)$polarity)
+ms2_ref <- ms2_ref[ms2_ref$polarity %in% pol]
 
 #' Same spectra processing as with the experimental data
 ms2_ref <- filterIntensity(ms2_ref, intensity = low_int) |>
@@ -273,7 +304,7 @@ for (i in seq_len(nrow(toplot))) {
 ## RTI
 
 ```{r}
-naps_res <- read.csv(file.path(dr, "naps.csv")))
+naps_res <- read.csv(file.path(dr, "naps.csv"))
 
 match_res <- update_all_with_rti(list_res$data, mse, naps_res)
 ```
@@ -285,7 +316,7 @@ match_res <- update_all_with_rti(list_res$data, mse, naps_res)
 match_res <- lapply(split(match_res, match_res$target_ChEBI.name),
                       function(z) {
     rts  <- chromPeaks(mse)[z$chrom_peak_id, "rt"]
-    param <- SimilarRtimeParam(diffRt = 10, groupFun = groupClosest)
+    param <- SimilarRtimeParam(diffRt = 10, groupFun = MsCoreUtils::group)
     groups <- groupFeatures(rts, param)
     z$rt <- rts
     z$rt_regions <- as.numeric(groups)
@@ -296,6 +327,7 @@ match_res <- lapply(split(match_res, match_res$target_ChEBI.name),
 
 ```{r}
 match_res[is.na(match_res)] <- 0
+match_res$mixture <- gsub("\\.", "_", match_res$mixture)
 
 write.csv(match_res, 
           file = paste0(dr, "/peak_evidence.csv"), row.names = FALSE)
