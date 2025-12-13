@@ -1,0 +1,64 @@
+library(tidyverse)
+library(readxl)
+
+# 1. Setup paths
+# Change this to the folder where your lab excel sheets are stored
+lab_data_folder <- "results/raw_lab_sheets" ## these are the manually curated adn then fixed sheet that i pasted into this folder. 
+
+# 2. Read and Combine Data
+# This finds all .xlsx files, reads them, and adds a 'lab_id' column based on the filename
+all_labs_data <- list.files(path = lab_data_folder, pattern = "\\.xlsx$", full.names = TRUE) %>%
+  set_names(basename(.)) %>%
+  map_dfr(~read_excel(.x), .id = "lab_file") %>%
+  mutate(lab_id = str_remove(lab_file, "\\.xlsx")) # Clean up lab name
+
+
+## export table of all annotations
+library(openxlsx)
+write.xlsx(all_labs_data, file = "results/raw_lab_sheets/all_lab_annotations.xlsx")
+
+df <- all_labs_data
+
+# 2. Group by Annotation (Consensus Check)
+# This confirms which metabolites are found by everyone vs. just one lab
+# 2. Clean and Group Data
+consensus_table <- df %>%
+  # Fix the RTI column: split by '|', convert to numeric, and take the average per row
+  mutate(
+    RTI_clean = map_dbl(
+      str_split(RTI, "\\|"),
+      ~ mean(as.numeric(.x), na.rm = TRUE)
+    )
+  ) %>%
+  group_by(target_ChEBI.name) %>%
+  summarise(
+    # --- LAB COUNT ---
+    n_labs = n_distinct(lab_id),
+
+    # --- RT REPORTING (Min/Max to show spread) ---
+    rt_min = min(rtmed, na.rm = TRUE),
+    rt_max = max(rtmed, na.rm = TRUE),
+    rt_mean = mean(rtmed, na.rm = TRUE),
+    rt_sd = sd(rtmed, na.rm = TRUE),
+
+    # --- RTI COMPARISON (Normalized stats) ---
+    rti_mean = mean(RTI_clean, na.rm = TRUE),
+    rti_sd = sd(RTI_clean, na.rm = TRUE),
+
+    # --- MZ COMPARISON ---
+    mz_mean = mean(mzmed, na.rm = TRUE),
+    mz_sd = sd(mzmed, na.rm = TRUE), # High SD = Calibration issues
+
+    # --- MS2 CONFIRMATION ---
+    # Count how many DISTINCT labs had at least one "true" MS2 match
+    labs_with_ms2 = n_distinct(lab_id[ms2_true_count > 0]),
+
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_labs))
+
+# View the flagged conflicts
+conflicts <- annotation_consensus %>% filter(status == "Flagged: Conflict")
+print(head(conflicts))
+
+# You can now join this back to the main data if needed

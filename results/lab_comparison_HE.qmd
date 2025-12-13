@@ -1,6 +1,7 @@
 ---
 title: "chr_genderation_comparison"
 format: html
+  toc: true
 execute:
   dir: project
 ---
@@ -11,7 +12,7 @@ execute:
 - Introduce statistical test for the differences observed.
 - fix heatmap for detected ratio similarity.
 - Download library on cluster.
-- fi xthe eval conditioon
+- fix the eval condition
 
 # Introduction
 
