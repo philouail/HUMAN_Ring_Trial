@@ -110,12 +110,10 @@ split(lengths(eics), eics$lab) |>
 Apply baseline correction, smoothing, and peak isolation:
 
 ```{r clean-eics}
-# --- 1. Define processing parameters ---
 baseline <- BaselineParam(lambda = 200, p = 0.005)
 smooth_params <- SavitzkyGolayParam(window = 9, polynomial = 2)
 isolate_params <- IsolatePeakParam(frac = 0.05, tail_point = 1)
 
-# --- 2. Apply the processing steps in a pipeline ---
 final_eics <- eics |>
   processEICs(param = baseline) |>
   processEICs(param = smooth_params) |>
