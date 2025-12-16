@@ -102,7 +102,6 @@ graph LR
 
   * **Input:** The consensus data from Step 3.
   * **Script:** `lib_gen_HE.qmd` (run per lab).
-      * > **Note:** This script is currently being updated.
   * **Final Outputs:**
       * `ring_trial_library_HE.csv`: The final library table.
       * `std_spectra_HE.mgf`: The MS/MS spectra in MGF format.
