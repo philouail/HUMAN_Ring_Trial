@@ -1,60 +1,58 @@
 ---
-title: "chr_genderation_comparison"
+title: "01 - Global Signal Analysis"
 format: html
-  toc: true
-execute:
-  dir: project
+editor_options:
+  chunk_output_type: console
 ---
 
-### TODOS 
-
-- FIX PCA plot 
+### TODOS
+- Separate POS and NEG plots
+- introduce the setups table and use it to describe inferences.
+- FIX PCA plot
 - Introduce statistical test for the differences observed.
-- fix heatmap for detected ratio similarity.
-- Download library on cluster.
-- fix the eval condition
+- what else ??
 
 # Introduction
 
 In this analysis, I aim to create **Chromatograms objects** from the
 preprocessed LC-MS data, primarily using the functionality provided by the
-**Chromatograms package**. The main goal is to compare full and extracted data 
+**Chromatograms package**. The main goal is to compare full and extracted data
 across different labs to understand how LC and MS setups influence the results.
 
 The comparison will proceed in multiple steps:
 
-1. **Full Data Analysis**:  
+1. **Full Data Analysis**:
 
    - Evaluate basic metrics such as BPC, TIC, and median intensity across
-     retention time (RT) bins.  
-   - Compute basic similarity metrics to assess data consistency across labs.  
-   
-1. **Detected Signal Analysis**:  
+     retention time (RT) bins.
+   - Compute basic similarity metrics to assess data consistency across labs.
+
+1. **Detected Signal Analysis**:
 
    - Focus on signals detected by peak picking algorithms, excluding baseline
-     noise.  
+     noise.
    - Recompute the same metrics and similarity measures as in the full data
-     analysis.  
+     analysis.
    - This step aims to highlight differences in sensitivity and peak detection
-     efficiency across labs. We hope to get more clear information on setup 
+     efficiency across labs. We hope to get more clear information on setup
      specificity.
 
-2. **Annotated Signal Analysis**:   
+2. **Annotated Signal Analysis**:
 
-   - Use lab-provided annotations to extract only "annotated" signals.  
-   - Recompute the same metrics and similarity measures.  
-   - Examine EICs of annotated peaks and calculate a variety of metrics for 
-     inter-lab comparison.  
+   - Use lab-provided annotations to extract only "annotated" signals.
+   - Recompute the same metrics and similarity measures.
+   - Examine EICs of annotated peaks and calculate a variety of metrics for
+     inter-lab comparison.
    - Save these results for later use in a separate peak similarity analysis
-     workflow, which will require evaluating multiple aspects of the data.  
+     workflow, which will require evaluating multiple aspects of the data.
 
 Currently, only harmonized method data is available, meaning the samples were
-run using the same column and protocol. Therefore, most observed differences 
-are expected to originate from variations in MS setups.  
+run using the same column and protocol. Therefore, most observed differences
+are expected to originate from variations in MS setups.
 
 For now, this analysis focuses solely on the **human endosome mixture**, but
 the workflow is designed to be extendable. A separate R script,
-`rt_analysis_function.R`, contains custom functions used in this workflow.  
+`rt_analysis_function.R`, contains custom functions used in this workflow.
 
 
 ## Load libraries
@@ -76,6 +74,7 @@ library(ggplot2)
 library(ggbeeswarm)
 
 source("rt_analysis_function.R")
+eval_sim <- FALSE  ## change to TRUE to eval similarity analysis
 ```
 
 ```{r, cores-cluster}
@@ -87,69 +86,47 @@ bpparam <- MulticoreParam(workers = parallel::detectCores() - 1)
 
 Below I load the preprocessed data from each lab.
 
-```{r load-full-data}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/sp_full.RData")) {
-  sp_afekta <- load_data(lab = "afekta", study_group = "HE")
-  sp_hmgu <- load_data(lab = "hmgu", study_group = "HE")
-  sp_icl <- load_data(lab = "icl", study_group = "HE")
-  sp_cembio <- load_data(lab = "cembio", study_group = "HE")
+Objects are created in `object_creation.qmd`. Load the full data:
 
-  sp_full <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-  save(sp_full, file = "object/sp_full.RData")
-  rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-} else {
-  load("object/sp_full.RData")
-}
+```{r load-full-data}
+load("object/sp_full.RData")
 ```
 
-If we summarise the number of MS1 spectra per lab: 
+If we summarise the number of MS1 spectra per lab:
 
 ```{r nb-spectra-full}
-table(sp_full$lab) 
+table(sp_full$lab)
 ```
 
-Below we summarize the rtime range per lab (in seconds). 
-They should be fairly similar for the harmonized method as we agreed on a 
+Below we summarize the rtime range per lab (in seconds).
+They should be fairly similar for the harmonized method as we agreed on a
 range during preprocessing.
 
 ```{r rt-range-full}
 lapply(split(rtime(sp_full), sp_full$lab), range)
 ```
 
-Insert table with experimental info later below: 
+Insert table with experimental info later below:
 
-[table]
+```{r}
+setup <- read.csv("5_downstream_analysis/lab_setup_phase1.csv", skip = 1)
+setup
+```
 
 ## Basic metrics
 
 ### Base Peak Chromatogram (BPC) area
 
 ```{r load-bpc-full}
-#| code-fold: true
-#| code-summary: "Show the code"
-if(!file.exists("object/bpc_full.RData")) {
-  bpc_full <- Chromatograms(sp_full, summarize.method = "max",
-                       factorize.by= "dataOrigin", 
-                       spectraVariables = c("mixture", "lab")) 
-  bpc_full <- setBackend(bpc_full, ChromBackendMemory())
-  save(file = "object/bpc_full.RData", bpc_full)
-} else {
-  load("object/bpc_full.RData")
-}
+load("object/bpc_full.RData")
 ```
 
 Below we compute the BPC area per mixture per lab and summarize across mixtures
 by summing the intensity values.
 
-Inference from Full BPC: 
+Inference from Full BPC:
 The BPC area on full data represents the total intensity of the most dominant
-ion at every scan, including baseline and chemical noise. Differences between 
-labs here can indicate variations in overall instrument sensitivity or, more 
-likely, differences in the level of background noise. A lab with a 
-significantly higher BPC may have a "noisier" baseline with more 
-intense background ions.
+ion at every scan, including baseline and chemical noise.
 
 ```{r sum-bpc-full, eval=TRUE}
 # Create a data frame for plotting [data from cite: 59]
@@ -173,44 +150,32 @@ ggplot(plot_data, aes(x = Lab, y = log2(BPC_Area), fill = Lab)) +
   theme(legend.position = "bottom")
 ```
 
-
-Note: this above is not normalized, we could by TIC but we already compute 
-the ratio below and it is probably the best computation anyway. 
+Note: this above is not normalized.
 
 Next compute CV per mixture across lab:
-Here normalize by standard deviation divided by mean. we are hoping to get some
+Here normalize by standard deviation divided by mean. We are hoping to get some
 information about the agreement of the BPC signal across lab.
 
 ```{r cv-full ,eval=TRUE}
-sbpc <- vapply(intensity(bpc_full), sum, numeric(1), na.rm = TRUE) 
-cv_per_mix <- tapply(sbpc, bpc_full$mixture, function(x) sd(x, na.rm =TRUE) / 
+sbpc <- vapply(intensity(bpc_full), sum, numeric(1), na.rm = TRUE)
+cv_per_mix <- tapply(sbpc, bpc_full$mixture, function(x) sd(x, na.rm =TRUE) /
                        mean(x, na.rm =TRUE))
 ```
 
+Not sure how useful this is, but plot it anyway.
 
 ### Total Ion Current (TIC) area
 
 ```{r load-tic-full}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/tic_full.RData")) {
-  tic_full <- Chromatograms(sp_full, summarize.method = "sum",
-                       factorize.by= "dataOrigin",
-                       spectraVariables = c("mixture", "lab")) 
-  tic_full <- setBackend(tic_full, ChromBackendMemory())
-  save(file = "object/tic_full.RData", tic_full)
-} else {
-  load("object/tic_full.RData")
-}
+load("object/tic_full.RData")
 ```
 
 Inference from Full TIC
-The TIC area on full data sums all ion intensities in every scan. This is a 
-measure of the total ion flux, or the total amount of "signal" (including all 
-noise, background, and analytes) detected by the instrument. Large differences 
-(e.g., 'icl' being much higher) suggest a significantly higher overall
-signal response, which could be due to higher background, different tuning,
-or higher sensitivity.
+The TIC area on full data sums all ion intensities in every scan. This is a
+measure of the total ion flux, or the total amount of "signal" (including all
+noise, background, and analytes) detected by the instrument. Large differences
+suggest a significantly higher overall signal response, which could be due to
+higher background, different tuning, or higher sensitivity.
 
 ```{r int-tic-full, eval=TRUE}
 stic <- vapply(intensity(tic_full), sum, numeric(1), na.rm = TRUE) # Need to define stic
@@ -234,20 +199,18 @@ ggplot(plot_data_tic, aes(x = Lab, y = log2(TIC_Area), fill = Lab)) +
   theme(legend.position = "bottom")
 ```
 
-Note: again this is not normalized. 
+Note: again this is not normalized.
 
 ### ratio BPC / TIC
 
-This metric, when applied to full data, is a powerful proxy for data 
-complexity and baseline noise. A low ratio (e.g., 0.1-0.2) indicates a 
-"messy" signal, where the total intensity (TIC) is spread across many 
+This metric, when applied to full data, is a powerful proxy for data
+complexity and baseline noise. A low ratio (e.g., 0.1-0.2) indicates a
+"messy" signal, where the total intensity (TIC) is spread across many
 different m/z values, and no single ion dominates. This is typical of a high,
-complex chemical or electronic baseline. A higher ratio would suggest a 
+complex chemical or electronic baseline. A higher ratio would suggest a
 "cleaner" run where, even in the baseline, a few ions dominate.
 
-The kruskal.test result (p-value < 2.2e-16) confirms that the differences in 
-this ratio between labs are statistically significant. It means at least one 
-lab has a systematically different data complexity profile.
+Gives an idea of the complexity of the signal.
 
 ```{r ratio-full-across, eval=TRUE}
 ratio_bpc_tic <- sbpc / stic
@@ -276,22 +239,21 @@ ggplot(plot_data_ratio, aes(x = Lab, y = BPC_TIC_Ratio, fill = Lab)) +
   theme(legend.position = "bottom")
 ```
 
-Kruskal results: Kruskal-Wallis chi-squared = 22.226, df = 3, p-value = 5.854e-05
 
-## tic/bpc ratio along rt 
+## tic/bpc ratio along rt
 
 Inference from Full BPC/TIC Ratio along RT
 This is a "fingerprint" of the baseline behavior.
 
-BPC/TIC Ratio Plot: 
-We are looking for differences in the shape of these profiles. A lab with a 
-consistently lower profile (like 'icl') has a more complex, "messy" baseline 
+BPC/TIC Ratio Plot:
+We are looking for differences in the shape of these profiles. A lab with a
+consistently lower profile (like 'icl') has a more complex, "messy" baseline
 across the entire gradient. A spiky profile (like 'afekta') suggests its
 baseline is cleaner, and the ratio only drops in specific, complex regions.
 
 Data Point Coverage Plot: This shows the density of data points (scans)
-across the run. Ideally, all labs should be similar, as the run time was 
-harmonized. Any large deviations here would indicate a problem with data 
+across the run. Ideally, all labs should be similar, as the run time was
+harmonized. Any large deviations here would indicate a problem with data
 acquisition (e.g., dropouts) or preprocessing.
 
 ```{r ratio-full, eval = TRUE, fig.width=12, fig.height=10}
@@ -314,7 +276,7 @@ ratio_all <- sapply(seq_along(tic_full), function(i) {
   rt <- rtime(tic_full[i])[[1]]
   int_tic <- intensity(tic_full[i])[[1]]
   int_bpc <- intensity(bpc_full[i])[[1]]
-  
+
   compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
 })
 
@@ -335,7 +297,7 @@ ratio_df <- as.data.frame(ratio_all) %>%
     names_to = "sample_id",
     values_to = "value"
   ) %>%
-  mutate(metric = "BPC/TIC Ratio") 
+  mutate(metric = "BPC/TIC Ratio")
 
 # --- 2. Melt the 'coverage_all' matrix ---
 coverage_df <- as.data.frame(coverage_all) %>%
@@ -345,7 +307,7 @@ coverage_df <- as.data.frame(coverage_all) %>%
     names_to = "sample_id",
     values_to = "value"
   ) %>%
-  mutate(metric = "Data Point Coverage") 
+  mutate(metric = "Data Point Coverage")
 
 # --- 3. Combine them and add lab/mixture info ---
 sample_info <- data.frame(
@@ -358,7 +320,7 @@ plot_data <- bind_rows(ratio_df, coverage_df) %>%
   left_join(sample_info, by = "sample_id")
 
 # --- 4. Plot ---
-plot_data$metric <- factor(plot_data$metric, 
+plot_data$metric <- factor(plot_data$metric,
                            levels = c("BPC/TIC Ratio", "Data Point Coverage"))
 
 ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
@@ -375,26 +337,26 @@ ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    strip.text = element_text(face = "bold", size = 12) 
+    strip.text = element_text(face = "bold", size = 12)
   )
 
-## for later similarity analysis i need to remove NA 
+## for later similarity analysis i need to remove NA
 ratio_all[is.na(ratio_all)] <- 0
 ```
 
 
 ## Chromatogram  Similarity
 
-For this we use Dynamic Time Warping (DTW), which measures similarity between 
+For this we use Dynamic Time Warping (DTW), which measures similarity between
 two chromatograms (time series) while being robust to small shifts in
 retention time. This makes it ideal for comparing runs where RTs may drift
-slightly. A low "normalizedDistance" means the two chromatograms have a very 
+slightly. A low "normalizedDistance" means the two chromatograms have a very
 similar shape.
 
-### ratio along retention time. 
+### ratio along retention time.
 
 Inference from Full Ratio DTW
-This is a more robust comparison. It compares the "fingerprints of complexity" 
+This is a more robust comparison. It compares the "fingerprints of complexity"
 from the previous section. If labs cluster here, it means their baseline noise
 profile is fundamentally similar across the entire gradient (e.g., their noise
 levels change in the same way as the gradient changes). This is a strong
@@ -404,7 +366,7 @@ phase.
 ```{r sim-ratio-full, eval= eval_sim, fig.width=8, fig.height=10}
 # Here, ratio_all has bins as rows and samples as columns.
 # We need to transpose it for proxy::dist (samples as rows).
-sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all), 
+sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all),
                                         method = "dtw_lb",
                                         window.type = "sakoechiba",
                                         window.size = 5)) # Smaller window for 30 bins
@@ -423,62 +385,29 @@ heatmap(sim_matrix_med, main = "DTW similarity of full tic/bpc ratio")
 The labels make it very hard to read. but it is very fast to run now.
 
 ```{r, rm-full}
-## delete the memory hungry object 
+## delete the memory hungry object
 rm(tic_full, bpc_full, sp_full)
 ```
 
 # Detected signal analysis
 
-This signal is essentially keeping the rt and mz area from peak detection. 
+This signal is essentially keeping the rt and mz area from peak detection.
 Now it reflects total detected signal (sensitivity of detection).
 
 Easier to compare labs because baseline noise is excluded.
-Differences now relate more to how well peaks were detected and instrument 
-sensitivity rather than background noise. 
+Differences now relate more to how well peaks were detected and instrument
+sensitivity rather than background noise.
 
-Load the results sheet below 
+Load the results sheet below
 
 ```{r load-detect}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/sp_full_detect.RData")) {
-  bpparam <- MulticoreParam(8) # for the cluster
-  sp_afekta <- detect_signal(lab = "afekta", study_group = "HE", 
-                             annotated = FALSE, bpparam = bpparam) # much better.
-  save(sp_afekta, file = "object/sp_afekta.RData") ## trying to save some memory space. 
-  rm(sp_afekta) 
-  
-  sp_hmgu <- detect_signal(lab = "hmgu", study_group = "HE",
-                           annotated = FALSE, bpparam = bpparam) # 
-  save(sp_hmgu, file = "object/sp_hmgu.RData")
-  rm(sp_hmgu) 
-  
-  sp_icl <- detect_signal(lab = "icl", study_group = "HE",
-                          annotated = FALSE, bpparam = bpparam)
-  save(sp_icl, file = "object/sp_icl.RData")
-  rm(sp_icl)
-  
-  sp_cembio <- detect_signal(lab = "cembio", study_group = "HE",
-                             annotated = FALSE, bpparam = bpparam)
-  save(sp_cembio, file = "object/sp_cembio.RData")
-  
-  
-  load("object/sp_hmgu.RData")
-  load("object/sp_afekta.RData")
-  load("object/sp_icl.RData")
-  
-  sp_full_detect <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-  save(sp_full_detect, file = "object/sp_full_detect.RData")
-  rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-} else {
-  load("object/sp_full_detect.RData")
-}
+load("object/sp_full_detect.RData")
 ```
 
 Summarize the number of MS1 spectra per lab:
 
 ```{r nb-spectra-detect}
-table(sp_full_detect$lab) ## compare with sp_full 
+table(sp_full_detect$lab) ## compare with sp_full
 ```
 
 Summarize the rtime range per lab (in seconds):
@@ -487,7 +416,7 @@ Summarize the rtime range per lab (in seconds):
 lapply(split(rtime(sp_full_detect), sp_full_detect$lab) , range)
 ```
 
-## Basic metrics 
+## Basic metrics
 
 Now baseline noise and spurious fluctuations are largely removed.
 
@@ -496,27 +425,17 @@ Now baseline noise and spurious fluctuations are largely removed.
 We generate the BPC from the detected signal.
 
 ```{r load-bpc-detect}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/bpc_detect.RData")) {
-  bpc_detect <- Chromatograms(sp_full_detect, summarize.method = "max",
-                       factorize.by= "dataOrigin", 
-                       spectraVariables = c("lab", "mixture")) 
-  bpc_detect <- setBackend(bpc_detect, ChromBackendMemory())
-  save(file = "object/bpc_detect.RData", bpc_detect)
-} else {
-  load("object/bpc_detect.RData")
-}
+load("object/bpc_detect.RData")
 ```
 
 We summarize the BPC area per mixture per lab by summing the intensity values.
 
 Inference from Detected BPC
-This is a much more meaningful metric than the "full" BPC. It represents 
-the sum of the apex intensities of all detected peaks. This is a direct proxy 
-for instrument sensitivity and peak detection efficiency. A lab with a higher 
-detected BPC is either detecting more peaks or detecting the 
-same peaks at a higher intensity. The CV per mixture  quantifies the inter-lab 
+This is a much more meaningful metric than the "full" BPC. It represents
+the sum of the apex intensities of all detected peaks. This is a direct proxy
+for instrument sensitivity and peak detection efficiency. A lab with a higher
+detected BPC is either detecting more peaks or detecting the
+same peaks at a higher intensity. The CV per mixture  quantifies the inter-lab
 variability in this sensitivity.
 
 ```{r sum-bpc-detect}
@@ -551,25 +470,15 @@ plot(cv_per_mix_det, main = "CV of Detected BPC per Mixture")
 ### Total Ion Current (TIC) area
 
 ```{r load-tic-detect}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/tic_detect.RData")) {
-  tic_detect <- Chromatograms(sp_full_detect, summarize.method = "sum",
-                       factorize.by= "dataOrigin",
-                       spectraVariables = c("mixture", "lab")) 
-  tic_detect <- setBackend(tic_detect, ChromBackendMemory())
-  save(file = "object/tic_detect.RData", tic_detect)
-} else {
-  load("object/tic_detect.RData")
-}
+load("object/tic_detect.RData")
 ```
 
 We summarize the TIC area per mixture per lab by summing the intensity values.
 
 Inference from Detected TIC
 This represents the sum of the areas of all detected peaks. It is the
-best measure of total quantifiable signal. Unlike the "full" TIC, this 
-excludes the baseline. Labs with higher detected TIC are capturing more total 
+best measure of total quantifiable signal. Unlike the "full" TIC, this
+excludes the baseline. Labs with higher detected TIC are capturing more total
 analyte signal, again pointing to higher sensitivity or better peak detection.
 
 ```{r int-tic-detect}
@@ -596,22 +505,22 @@ ggplot(plot_data_tic_det, aes(x = Lab, y = log2(TIC_Area), fill = Lab)) +
 
 ### ratio BPC / TIC
 
-ow that we should have gotten rid of baseline and noise signal, the ratio 
+ow that we should have gotten rid of baseline and noise signal, the ratio
 should be properly describing the complexity of the detected signal.
 
 Inference from Detected BPC/TIC Ratio:
 
 This measures the **complexity of the detected features**.
 
-A ratio closer to 1 would imply that the detected peaks 
+A ratio closer to 1 would imply that the detected peaks
 are "pure" (BPC $\approx$ TIC).
 
 A low ratio (like we see) means that even
-within the detected peak boundaries, the signal is spread across many ions. 
-This could be due to co-elution, fragmentation, adducts, or the peak-picking 
+within the detected peak boundaries, the signal is spread across many ions.
+This could be due to co-elution, fragmentation, adducts, or the peak-picking
 algorithm including noisy parts of the peak.
 
-Comparing labs, afekta seems to have a lower ratio, suggesting their detected 
+Comparing labs, afekta seems to have a lower ratio, suggesting their detected
 peaks are more complex(more co-elution/fragments) than other labs.
 
 ```{r ratio-detect-across}
@@ -636,10 +545,10 @@ ggplot(plot_data_ratio_det, aes(x = Lab, y = BPC_TIC_Ratio, fill = Lab)) +
   theme(legend.position = "bottom")
 ```
 
-## Tic/Bpc ratio along rt 
+## Tic/Bpc ratio along rt
 
-Gives us some kind of chromatographic fingerprint per lab. 
-Instead of baseline shape, you’re summarizing where peaks are detected along 
+Gives us some kind of chromatographic fingerprint per lab.
+Instead of baseline shape, you’re summarizing where peaks are detected along
 the gradient.
 
 
@@ -647,15 +556,15 @@ Inference from Detected BPC/TIC Ratio along RT
 
 This is a "fingerprint of detected signal."
 
-BPC/TIC Ratio Plot: This shows where in the gradient the detected signal is 
+BPC/TIC Ratio Plot: This shows where in the gradient the detected signal is
 "clean" (high ratio) or "complex" (low ratio). All labs show a similar
 pattern (e.g., a drop in complexity in the middle bins), but at different
 levels. 'icl' consistently shows the most complex (lowest ratio) signal,
 while 'afekta' shows the cleanest (highest ratio).
 
-Data Point Coverage Plot: This is now a very important plot. It is no longer 
-uniform. It shows where in the gradient each lab detected signal. This is a 
-powerful visualization of peak density. All labs seem to detect most of their 
+Data Point Coverage Plot: This is now a very important plot. It is no longer
+uniform. It shows where in the gradient each lab detected signal. This is a
+powerful visualization of peak density. All labs seem to detect most of their
 signal in the first ~15 bins. 'icl' appears to detect signal across more
 bins than others.
 
@@ -665,7 +574,7 @@ ratio_all <- sapply(seq_along(tic_detect), function(i) {
   rt <- rtime(tic_detect[i])[[1]]
   int_tic <- intensity(tic_detect[i])[[1]]
   int_bpc <- intensity(bpc_detect[i])[[1]]
-  
+
   compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
 })
 
@@ -686,7 +595,7 @@ ratio_df <- as.data.frame(ratio_all) %>%
     names_to = "sample_id",
     values_to = "value"
   ) %>%
-  mutate(metric = "BPC/TIC Ratio") 
+  mutate(metric = "BPC/TIC Ratio")
 
 # --- 2. Melt the 'coverage_all' matrix ---
 coverage_df <- as.data.frame(coverage_all) %>%
@@ -696,7 +605,7 @@ coverage_df <- as.data.frame(coverage_all) %>%
     names_to = "sample_id",
     values_to = "value"
   ) %>%
-  mutate(metric = "Data Point Coverage") 
+  mutate(metric = "Data Point Coverage")
 
 # --- 3. Combine them and add lab/mixture info ---
 sample_info <- data.frame(
@@ -709,7 +618,7 @@ plot_data <- bind_rows(ratio_df, coverage_df) %>%
   left_join(sample_info, by = "sample_id")
 
 # --- 4. Plot ---
-plot_data$metric <- factor(plot_data$metric, 
+plot_data$metric <- factor(plot_data$metric,
                            levels = c("BPC/TIC Ratio", "Data Point Coverage"))
 
 ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
@@ -726,10 +635,10 @@ ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    strip.text = element_text(face = "bold", size = 12) 
+    strip.text = element_text(face = "bold", size = 12)
   )
 
-## for later similarity analysis i need to remove NA 
+## for later similarity analysis i need to remove NA
 ratio_all[is.na(ratio_all)] <- 0
 ```
 
@@ -737,7 +646,7 @@ Need to cut or make much wider.
 
 ## Chromatogram  Similarity
 
-### ratio along retention time. 
+### ratio along retention time.
 
 Inference from Detected Ratio DTW
 
@@ -755,7 +664,7 @@ try(library(tidyr))
 
 # --- 3. Calculate the DTW similarity matrix [cite: 81] ---
 # Transpose ratio_all so samples are rows
-sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all), 
+sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all),
                                         method = "dtw_lb",
                                         window.type = "sakoechiba",
                                         window.size = 5))
@@ -773,15 +682,15 @@ rownames(annotation_df) <- colnames(ratio_all) # CRITICAL: names must match
 pheatmap(
   sim_matrix_med,
   main = "DTW Similarity of BPC/TIC Ratio (Detected Signal)",
-  
+
   # Add the annotation bars
   annotation_row = annotation_df,
   annotation_col = annotation_df,
-  
+
   # Hide the unreadable text labels
   show_rownames = FALSE,
   show_colnames = FALSE,
-  
+
   # Improve clustering and color
   clustering_distance_rows = as.dist(sim_matrix_med),
   clustering_distance_cols = as.dist(sim_matrix_med),
@@ -790,11 +699,11 @@ pheatmap(
 )
 ```
 
-!!! adding a column of color by lab would be nice. 
+!!! adding a column of color by lab would be nice.
 
 
 ```{r , rm-detect}
-## delete the memory hungry object 
+## delete the memory hungry object
 rm(tic_detect, bpc_detect, sp_full_detect)
 ```
 
@@ -803,37 +712,21 @@ rm(tic_detect, bpc_detect, sp_full_detect)
 Here we will ONLY keep the annotated signal.
 
 ```{r load-annotations}
-## get this table from library generation
+## Annotations are loaded in object_creation.qmd
 study_group <- "HE"
-res_afekta <- read.csv(file.path("..", "afekta", "results",
+res_afekta <- read.csv(file.path("..", "4_library_generation", "afekta",
                                  study_group, "ring_trial_library_HE.csv"))
-res_hmgu <- read.csv(file.path("..", "hmgu", "results", 
+res_hmgu <- read.csv(file.path("..", "4_library_generation", "hmgu",
                                study_group, "ring_trial_library_HE.csv"))
-res_icl <- read.csv(file.path("..", "icl" , "results", 
+res_icl <- read.csv(file.path("..", "4_library_generation", "icl",
                                study_group, "ring_trial_library_HE.csv"))
-res_cembio <- read.csv(file.path("..", "cembio", "results",
+res_cembio <- read.csv(file.path("..", "4_library_generation", "cembio",
                                  study_group, "ring_trial_library_HE.csv"))
 ```
 
 
-```{r, an_signal_sp}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/sp_full_ann.RData")) {
-  bpparam <- MulticoreParam(8)
-  sp_afekta <- detect_signal(lab = "afekta", study_group = study_group,
-                             annotated = TRUE, bpparam = bpparam)
-  sp_hmgu <- detect_signal(lab = "hmgu", study_group = study_group, 
-                           annotated = TRUE, bpparam = bpparam) 
-  sp_icl <- detect_signal(lab = "icl", study_group = study_group, 
-                          annotated = TRUE, bpparam = bpparam)
-  sp_cembio <- detect_signal(lab = "cembio", study_group = study_group, 
-                             annotated = TRUE, bpparam = bpparam)
-  sp_full_ann <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio) 
-  save(sp_full_ann, file = "object/sp_full_ann.RData")
-} else {
-  load("object/sp_full_ann.RData")
-}
+```{r an_signal_sp}
+load("object/sp_full_ann.RData")
 ```
 
 ```{r, rm-ann}
@@ -843,7 +736,7 @@ rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
 Summarize the number of MS1 spectra per lab:
 
 ```{r nb-spectra-ann}
-table(sp_full_ann$lab) 
+table(sp_full_ann$lab)
 ```
 
 Summarize the rtime range per lab (in seconds):
@@ -857,25 +750,15 @@ lapply(split(rtime(sp_full_ann), sp_full_ann$lab) , range)
 ### Base Peak Chromatogram (BPC) area
 
 ```{r load-bpc-ann}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/bpc_ann.RData")) {
-  bpc_ann <- Chromatograms(sp_full_ann, summarize.method = "max",
-                       factorize.by= "dataOrigin",
-                       spectraVariables = c("mixture", "lab"))
-  bpc_ann <- setBackend(bpc_ann, ChromBackendMemory())
-  save(file = "object/bpc_ann.RData", bpc_ann)
-} else {
-  load("object/bpc_ann.RData")
-}
+load("object/bpc_ann.RData")
 ```
 
 We summarize the BPC area per mixture per lab by summing the intensity values.
 
-Inference from Annotated BPC: 
+Inference from Annotated BPC:
 
-This measures the sum of peak heights (apices) for only the annotated 
-standards. This is a direct measure of quantitative sensitivity for the 
+This measures the sum of peak heights (apices) for only the annotated
+standards. This is a direct measure of quantitative sensitivity for the
 target compounds. The high variability shows that for the same compounds,
 some labs get much stronger signals than others. This is a key finding for an
 inter-lab comparison.
@@ -913,26 +796,16 @@ plot(cv_per_mix_ann, main = "CV of Annotated BPC per Mixture")
 ### Total Ion Current (TIC) area
 
 ```{r load-tic-ann}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/tic_ann.RData")) {
-  tic_ann <- Chromatograms(sp_full_ann, summarize.method = "sum",
-                       factorize.by= "dataOrigin",
-                       spectraVariables = c("mixture", "lab")) 
-  tic_ann <- setBackend(tic_ann, ChromBackendMemory())
-  save(file = "object/tic_ann.RData", tic_ann)
-} else {
-  load("object/tic_ann.RData")
-}
+load("object/tic_ann.RData")
 ```
 
 We summarize the TIC area per mixture per lab by summing the intensity values.
 
 This measures the sum of peak areas for only the annotated standards. This is
 the best metric for overall quantitative agreement. The plots show 'afekta'
-and cembio have 
-the highest integrated area for these standards, while 'hmgu' and 'icl' have the lowest. 
-The CV (calculated below) will be a key result for the thesis, quantifying 
+and cembio have
+the highest integrated area for these standards, while 'hmgu' and 'icl' have the lowest.
+The CV (calculated below) will be a key result for the thesis, quantifying
 the inter-lab quantitative discrepancy.
 
 ```{r int-tic-ann}
@@ -959,10 +832,10 @@ ggplot(plot_data_tic_ann, aes(x = Lab, y = log2(TIC_Area), fill = Lab)) +
 
 ### ratio BPC / TIC
 
-Now we get the ratio for the spiked compound that were detected. 
+Now we get the ratio for the spiked compound that were detected.
 
 Inference from Annotated BPC/TIC Ratio
-This is a critical metric for peak purity. This ratio (Apex Height / Peak Area, 
+This is a critical metric for peak purity. This ratio (Apex Height / Peak Area,
 scaled) for known compounds tells us how "clean" those peaks are.
 
 A high ratio suggests a sharp, pure peak where the apex dominates the area.
@@ -970,7 +843,7 @@ A high ratio suggests a sharp, pure peak where the apex dominates the area.
 A low ratio suggests a broader, tailing, or co-eluting peak, where the apex
 intensity is low relative to the total peak area.
 
-The plot shows 'afekta' and 'cembio' have the highest ratio (cleanest peaks), 
+The plot shows 'afekta' and 'cembio' have the highest ratio (cleanest peaks),
 while 'icl' has the lowest (broadest/messiest peaks). This is a key difference
 in chromatographic/MS performance.
 
@@ -996,22 +869,22 @@ ggplot(plot_data_ratio_ann, aes(x = Lab, y = BPC_TIC_Ratio, fill = Lab)) +
   theme(legend.position = "bottom")
 ```
 
-Max is one, why are the plot going above ? 
+Max is one, why are the plot going above ?
 
-## tic/bpc ratio along rt 
+## tic/bpc ratio along rt
 
 Inference from Annotated BPC/TIC Ratio along RT
-This plot shows where the annotated standards are eluting and what their peak 
+This plot shows where the annotated standards are eluting and what their peak
 purity (BPC/TIC ratio) is at that location.
 
 BPC/TIC Ratio Plot: The plot should be "spiky," not continuous, as it only
-contains data from annotated peaks. The height of the spikes in each bin 
-reflects the average "purity" of the standards eluting there. We can see the 
+contains data from annotated peaks. The height of the spikes in each bin
+reflects the average "purity" of the standards eluting there. We can see the
 'icl' profile is consistently lower than the others, confirming its peaks are
 less "pure" (lower BPC/TIC ratio) across the entire gradient.
 
-Data Point Coverage Plot: This is a key validation plot. It shows how many 
-annotated standards were detected in each RT bin. It confirms that all labs 
+Data Point Coverage Plot: This is a key validation plot. It shows how many
+annotated standards were detected in each RT bin. It confirms that all labs
 are finding the standards in roughly the same elution regions (e.g., bins 5-15).
 
 ```{r ratio-ann, eval = FALSE, fig.width=12, fig.height=9}
@@ -1020,7 +893,7 @@ ratio_all <- sapply(seq_along(tic_ann), function(i) {
   rt <- rtime(tic_ann[i])[[1]]
   int_tic <- intensity(tic_ann[i])[[1]]
   int_bpc <- intensity(bpc_ann[i])[[1]]
-  
+
   compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
 })
 
@@ -1030,7 +903,7 @@ coverage_all <- sapply(seq_along(tic_ann), function(i) {
 })
 
 # Assign names
-colnames(ratio_all) <- paste(tic_ann$lab, tic_ann$mixture, "pol:", 
+colnames(ratio_all) <- paste(tic_ann$lab, tic_ann$mixture, "pol:",
                              tic_ann$polarity, sep = "_")
 colnames(coverage_all) <- colnames(ratio_all)
 
@@ -1042,7 +915,7 @@ ratio_df <- as.data.frame(ratio_all) %>%
     names_to = "sample_id",
     values_to = "value"
   ) %>%
-  mutate(metric = "BPC/TIC Ratio") 
+  mutate(metric = "BPC/TIC Ratio")
 
 # --- 2. Melt the 'coverage_all' matrix ---
 coverage_df <- as.data.frame(coverage_all) %>%
@@ -1065,7 +938,7 @@ plot_data <- bind_rows(ratio_df, coverage_df) %>%
   left_join(sample_info, by = "sample_id")
 
 # --- 4. Plot ---
-plot_data$metric <- factor(plot_data$metric, 
+plot_data$metric <- factor(plot_data$metric,
                            levels = c("BPC/TIC Ratio", "Annotated Peak Count"))
 
 ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
@@ -1082,10 +955,10 @@ ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    strip.text = element_text(face = "bold", size = 12) 
+    strip.text = element_text(face = "bold", size = 12)
   )
 
-## for later similarity analysis i need to remove NA 
+## for later similarity analysis i need to remove NA
 ratio_all[is.na(ratio_all)] <- 0
 ```
 
@@ -1100,7 +973,7 @@ across the gradient for the annotated standards.
 ### ratio along retention time.
 
 ```{r ratio-sim , eval=eval_sim}
-sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all), 
+sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all),
                                         method = "dtw_lb",
                                         window.type = "sakoechiba",
                                         window.size = 5))
@@ -1114,7 +987,7 @@ hc_med <- hclust(as.dist(sim_matrix_med))
 plot(hc_med, labels = labels, main = "DTW clustering of BPC/TIC ratio (Annotated)")
 
 # heatmap
-heatmap(sim_matrix_med, labRow = labels, labCol = labels, 
+heatmap(sim_matrix_med, labRow = labels, labCol = labels,
         main = "DTW similarity of BPC/TIC ratio (Annotated)")
 ```
 
@@ -1178,7 +1051,7 @@ ggplot(data.frame(Lab = tic_full$lab, Ratio =log2(ratio)), aes(x = Lab, y = Rati
 
 -   total signal - annotated peak signal
 
-This value (dif_int3) represents all signal except the annotated standards. 
+This value (dif_int3) represents all signal except the annotated standards.
 This includes the baseline noise and all the unannotated peaks.
 
 ```{r noise-ann}
@@ -1200,17 +1073,17 @@ ggplot(data.frame(Lab = tic_full$lab, Ratio =log2(ratio)), aes(x = Lab, y = Rati
 
 - detected - annotated peak signal
 
-This (dif_int4) is a very insightful metric for my thesis. It represents the 
+This (dif_int4) is a very insightful metric for my thesis. It represents the
 total signal from unannotated peaks. This is the "unknown" but "real" chemical
 signal that was detected.
 
-A lab with a high value (like 'icl') is detecting more "other" compounds. 
+A lab with a high value (like 'icl') is detecting more "other" compounds.
 This could be due to:
 Higher sensitivity, allowing it to see more low-level unknown compounds.
-Different fragmentation/adduct formation, meaning it's detecting more variants 
+Different fragmentation/adduct formation, meaning it's detecting more variants
 of the annotated standards, which are not themselves annotated.
 
-A lab with a low value (like 'hmgu') is detecting less signal outside of the 
+A lab with a low value (like 'hmgu') is detecting less signal outside of the
 annotated standards.
 
 ```{r noise-detect-ann}
@@ -1229,369 +1102,41 @@ ggplot(data.frame(Lab = tic_full$lab, Ratio =log2(ratio)),
 ```
 
 
-# Peak analysis 
+# Peak Analysis
 
-This section implements the downstream peak feature analysis you planned . 
-We load the extracted EICs, clean them, calculate metrics, and then perform
-inter-lab comparisons on a per-compound basis.
+Peak feature calculation and analysis is performed in `peak_feature_calculation.qmd`.
 
-```{r load-tic-full-spectra}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/tic_full_spectra.RData")) {
-  load("object/sp_full.RData")
-  sp_full <- filterEmptySpectra(sp_full)
-  tic_full <- Chromatograms(sp_full, summarize.method = "sum",
-                       factorize.by= "dataOrigin",
-                       spectraVariables = c("mixture", "lab")) 
-  save(tic_full, file = "object/tic_full_spectra.RData") 
-} else {  
-  load("object/tic_full_spectra.RData")
-}
+Load the peak report:
+
+```{r load-peak-report}
+load("object/full_peak_report.RData")
 ```
 
-## Prep raw data 
+Summary of peak features by lab:
 
-I think I will extract from TIC full data. I want to take some extra data as 
-"padding" around the detected peaks. 
+```{r peak-feature-summary}
+cat("Number of peaks per lab:\n")
+table(full_peak_report$lab)
 
-### extract peaks 
-
-```{r peak-table}
-res_afekta$lab <- "afekta"
-res_hmgu$lab <- "hmgu"
-res_icl$lab <- "icl"
-res_cembio$lab <- "cembio"
-
-peak_table <- rbind(res_hmgu, res_afekta, res_icl, res_cembio)
-
-colnames(peak_table)[1] <- "chrom_peak_id"
-colnames(peak_table)[4:7] <- c("mzMin", "mzMax", "rtMin", "rtMax")
-peak_table$mzMin <- peak_table$mzMin - 0.003
-peak_table$mzMax <- peak_table$mzMax + 0.003
-peak_table$rtMin <- peak_table$rtMin - 3
-peak_table$rtMax <- peak_table$rtMax + 3
-peak_table$polarity <- ifelse(peak_table$polarity == "pos", 1, 0)
-```
-
-
-```{r load-eics-detected, warning = FALSE}
-#| code-fold: true
-#| code-summary: "Show the code"
-if (!file.exists("object/eics_detected.RData")) {
-  eics <- chromExtract(tic_full, peak.table = peak_table,
-                       by = c("polarity", "lab", "mixture"))
-  eics <- setBackend(eics, ChromBackendMemory())
-  eics <- imputePeaksData(eics, method = "linear")
-  eics <- applyProcessing(eics)
-} else {
-  load("object/eics_detected.RData")
-}
-```
-
--   number of peak per lab/ annotated adducts and annotated compound.
-
-```{r peak-summary}
-## number of peak per lab 
-table(peak_table$lab)
-
-## number of compound per lab
-split(peak_table$compound_name, peak_table$lab) |> 
-  lapply(unique) |> 
-  lapply(length)
-```
-
-How may where there in HE ? 
-
-```{r peak-lengths}
-split(lengths(eics), eics$lab) |>
-  lapply(summary)
-```
-
-I want to recalculate this after cleanup.
-
-## Clean eics
-
-```{r}
-# --- 1. Define processing parameters ---
-baseline <- BaselineParam(lambda = 200, p = 0.005)
-smooth_params <- SavitzkyGolayParam(window = 9, polynomial = 2)
-isolate_params <- IsolatePeakParam(frac = 0.05, tail_point = 1)
-
-# --- 2. Apply the processing steps in a pipeline ---
-# The pipe makes the sequence of operations very clear
-final_eics <- eics |>
-  processEICs(param = baseline) |>
-  processEICs(param = smooth_params) |>
-  processEICs(param = isolate_params) 
-
-## get rid of empty eics (from isolation or bad extraction)
-idx_na <- which(sapply(intensity(final_eics), function(i) all(is.na(i))) | 
-                  lengths(intensity(final_eics)) < 3)
-
-if (length(idx_na) > 0) {
-  print(paste("Removing", length(idx_na), "EICs with all NA intensities or too short"))
-  final_eics <- final_eics[-idx_na]
-}
-```
-
-## Peak feature calculation
-
-```{r}
-# Calculate metrics using your custom function
-metrics <- calculatePeakMetrics(peaksData(final_eics))
-
-# Merge metrics with EIC metadata (lab, mixture, compound)
-eic_data <- as.data.frame(chromData(final_eics))
-full_peak_report <- cbind(eic_data, metrics)
-
-# Filter out low-intensity peaks
-idx_low_int <- which(full_peak_report$apex_intensity < 500)
-if (length(idx_low_int) > 0) {
-  warning(paste("Removing", length(idx_low_int), "peaks with apex intensity < 500"))
-  full_peak_report <- full_peak_report[-idx_low_int, ]
-}
-
-head(full_peak_report)
-```
-
-Below i explore possibly more advanced filtering based on peak metrics. !!!
-- base to apex ratio could help 
-- check why some do nto have their FWHM calculated
-
-```{r}
-which(new_metrics$bs_ratio > 0.24) -> ids_test
-dir.create("figure/peak_check/", showWarnings = FALSE)
-for (i in ids_test) {
-  png(paste0("figure/peak_check/eic_bad_", i, ".png"))
-  plotChromatograms(final_eics[i], main = paste("EIC", i, "Bad"))
-  dev.off()
-}
-```
-
-- Some look of some feature specifically acccross lab (summary()) could be interesting
-
-```{r}
-# Entropy (from your calculatePeakMetrics function)
+cat("\nEntropy summary by lab:\n")
 split(full_peak_report$entropy, full_peak_report$lab) |>
   lapply(summary)
-```
-Entropy is a measure of peak complexity or "purity".
 
-A low entropy is good. It signifies a "pure," sharp, and simple peak shape where the signal is highly concentrated.
-
-A high entropy is bad. It indicates a "messy" peak that is broad, noisy, or has significant tailing/fronting, as the signal is "spread out."
-If one lab (e.t., 'icl') has a systematically higher median entropy than the others ('afekta', 'cembio'), it provides quantitative proof that their chromatographic setup produces less "pure" or less ideal peak shapes, which can negatively impact quantification.
-
-```{r}
-# FWHM (from your calculatePeakMetrics function)
+cat("\nFWHM summary by lab:\n")
 split(full_peak_report$fwhm, full_peak_report$lab) |>
   lapply(summary)
 ```
 
-FWHM is the classic measure of peak width.
+See `peak_feature_calculation.qmd` for detailed peak feature analysis including:
 
-A low FWHM is good. It means peaks are sharp and narrow, indicating high chromatographic efficiency and good separation.
+- EIC extraction and preprocessing
+- Peak metric calculation (entropy, FWHM, tailing factor, etc.)
+- Retention time stability analysis
+- Quantitative robustness assessment
+- PCA on peak features
 
-A high FWHM is bad. It means peaks are broad, which leads to poorer resolution (more co-elution) and lower sensitivity (as the signal is spread over more time).
+Next steps for peak similarity analysis:
 
-
-What to look for: This directly assesses the "Peak Shape Analysis" you planned. If 'hmgu' shows a significantly larger median FWHM, it suggests their LC system (or MS settings) is less efficient at producing sharp peaks than the other labs.
-
-```{r}
-# Gaussian Peak Fit R^2 (from your calculatePeakMetrics function)
-split(full_peak_report$gaussian_similarity, full_peak_report$lab) |>
-  lapply(summary)
-```
-
-```{r}
-## tailing 
-split(full_peak_report$tailing_factor, full_peak_report$lab) |>
-  lapply(summary)
-```
-Tailing Factor measures peak symmetry.
-A Tailing Factor close to 1 is ideal, indicating a symmetric peak shape.
-A Tailing Factor significantly greater than 1 indicates peak tailing, where the trailing edge of the peak is longer than the leading edge. This is undesirable as it can lead to co-elution and inaccurate quantification.
-
-A Tailing Factor significantly less than 1 indicates fronting, where the leading edge of the peak is longer than the trailing edge. This is also undesirable for similar reasons.
-
-
-```{r}
-## tailing 
-split(full_peak_report$tailing_factor, full_peak_report$lab) |>
-  lapply(summary)
-```
-
-## Downstream Peak Feature Analysis 
-
-1. Retention Time (RT) Shift Analysis
-
-Inference: RT Stability
-This analysis  calculates the mean, standard deviation (SD), and coefficient 
-of variation (CV) of the retention time for each compound across all labs.
-
-Low CV: Indicates good chromatographic stability and high agreement between 
-labs, as expected from a harmonized protocol.
-
-High CV: Indicates significant RT shifts for that specific compound, 
-suggesting it is sensitive to minor differences in LC setup (e.g., column 
-temperature, gradient mixing) between labs.
-
-```{r}
-# We need to get the RT of the apex from the metrics
-rt_report <- full_peak_report %>%
-  group_by(compound_name, mixture) %>%
-  summarize(
-    mean_rt = mean(rt_apex, na.rm = TRUE),
-    sd_rt = sd(rt_apex, na.rm = TRUE),
-    cv_rt = sd_rt / mean_rt,
-    n_detect = n()
-  ) %>%
-  arrange(desc(cv_rt))
-
-print("Retention Time Stability Report (Top 10 most variable):")
-head(rt_report, 10)
-
-# Plot the distribution of RT CVs
-ggplot(rt_report, aes(x = cv_rt)) +
-  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.8) +
-  labs(title = "Distribution of Retention Time CVs",
-       x = "CV of RT (per compound)",
-       y = "Frequency") +
-  theme_minimal()
-```
-
-
-2. EIC Intensity Consistency (Quantitative Robustness)
-
-Since the LC setup is harmonized and the same standard mixture is used, the 
-total mass/amount injected is the same. Differences in measured peak 
-area/height are due to variations in the MS (e.g., ionization efficiency, 
-instrument tuning, mass accuracy/resolution, MS type).
-Computation: Calculate the $\text{CV}$ of the Integrated Peak Area and Peak 
-Height for each standard across the labs.Analysis: This is a crucial metric 
-for ring trials, indicating the Quantitative Robustness of the MS methods.
-High $\text{CV}$ suggests large differences in MS sensitivity.
-
-Inference: Quantitative Robustness
-This is a critical metric for a ring trial. It calculates the CV of peak Area 
-(AUC) and Height (apex_intensity) for each compound across all labs.
-
-Low CV: Indicates good quantitative agreement. The MS setups, despite being 
-different, are providing similar quantitative responses for that compound.
-
-High CV: This is a major finding. It indicates large differences in MS 
-sensitivity  for that specific compound. This highlights which compounds are 
-"hard to quantify" consistently and which labs' setups are outliers
-
-
-```{r}
-intensity_report <- full_peak_report %>%
-  group_by(compound_name, mixture) %>%
-  summarize(
-    mean_auc = mean(auc, na.rm = TRUE),
-    sd_auc = sd(auc, na.rm = TRUE),
-    cv_auc = sd_auc / mean_auc,
-    mean_height = mean(apex_intensity, na.rm = TRUE),
-    sd_height = sd(apex_intensity, na.rm = TRUE),
-    cv_height = sd_height / mean_height,
-    n_detect = n()
-  ) %>%
-  arrange(desc(cv_auc))
-
-print("Quantitative Robustness Report (Top 10 most variable by Area):")
-head(intensity_report, 10)
-
-# Plot the distribution of Area CVs
-ggplot(intensity_report, aes(x = cv_auc)) +
-  geom_histogram(bins = 30, fill = "darkred", alpha = 0.8) +
-  labs(title = "Distribution of Peak Area (AUC) CVs",
-       x = "CV of AUC (per compound)",
-       y = "Frequency") +
-  theme_minimal()
-```
-
-3. Principal Component Analysis (PCA) on Peak Features
-
-Inference: Clustering by Lab or Compound
-This analysis  clusters all detected peaks based on their shape and 
-intensity features (RT, Area, Height, FWHM, etc.).
-
-Strong clustering by Lab: This is a powerful conclusion. It means the
-MS setup is the dominant factor driving peak quality. For example, all
-peaks from 'icl' might cluster together because they are systematically
-broader (low BPC/TIC ratio, as seen earlier) or have higher intensity.
-
-Clustering by Compound: This would suggest that the labs are relatively
-consistent, and the main differences in peak shape are driven by the
-chemical properties of the compounds themselves.
-
-No clear clustering: This indicates high variability (a "hairball" plot),
-where no single factor dominates.
-
-```{r, eval =FALSE}
-# Prepare the data for PCA
-# We need a numeric matrix: one row per peak, one col per feature
-pca_data <- full_peak_report %>%
-  select(rt_apex, apex_intensity, fwhm, rt_width, auc, entropy) %>%
-  # Remove any rows with NAs (e.g., from failed FWHM calculation)
-  na.omit()
-
-## get idx of the rows kept after na.omit to match metadata
-idx <- which(complete.cases(full_peak_report[, c("rt_apex", "apex_intensity", 
-                                              "fwhm", "rt_width", "auc", "entropy")]))
-
-
-# Log-transform intensity/area to manage scale differences
-pca_data$apex_intensity <- log10(pca_data$apex_intensity)
-pca_data$auc <- log10(pca_data$auc)
-
-# Run PCA
-pca_res <- prcomp(pca_data, center = TRUE, scale. = TRUE)
-
-# Get the plotting data (scores)
-pca_scores <- as.data.frame(pca_res$x)
-
-# Add the metadata back
-# We need to use the same 'na.omit()' logic to keep indices aligned
-pca_scores$lab <- full_peak_report$lab[idx]
-pca_scores$mixture <- full_peak_report$mixture[idx]
-pca_scores$compound_name <- full_peak_report$compound_name[idx]
-
-# Get variance explained
-pc_var <- summary(pca_res)$importance[2,]
-
-# Plot PC1 vs PC2
-ggplot(pca_scores, aes(x = PC1, y = PC2, color = lab, shape = mixture)) +
-  geom_point(alpha = 0.7, size = 2) +
-  labs(
-    title = "PCA of Peak Features",
-    subtitle = "Do peaks cluster by lab, based on their shape and intensity?",
-    x = paste0("PC1 (", round(pc_var[1] * 100, 1), "% variance)"),
-    y = paste0("PC2 (", round(pc_var[2] * 100, 1), "% variance)"),
-    color = "Laboratory",
-    shape = "Mixture"
-  ) +
-  theme_minimal() +
-  # Add ellipses to show the 95% confidence interval for each lab
-  stat_ellipse(aes(group = lab), level = 0.95, linetype = "dashed")
-```
- I need to fix the PCA plots.
-
-Next step: 
-
-Mass Accuracy Check (if possible from EIC data):
-
-[probably in a separate file]
-=
-Using peak feature to do blidn clustering and see if this works as a way to group adducts together.
-Some notes for this: 
-- for similarity comparison try zeros grouping, check rt scan order. 
-or difference between each data point. I think this could work. 
-
-
-
-
-
-
-
+- Mass accuracy check
+- Blind clustering to group adducts
+- Similarity comparison using zeros grouping, RT scan order differences

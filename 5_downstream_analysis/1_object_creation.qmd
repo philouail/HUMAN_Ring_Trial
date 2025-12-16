@@ -1,0 +1,273 @@
+---
+title: "Object Creation for Lab Comparison Analysis"
+format: html
+execute:
+  dir: project
+---
+
+# Introduction
+
+This document creates all the data objects needed for the lab comparison analysis.
+These objects are saved to the `object/` directory and can be loaded by other
+analysis scripts.
+
+## Load libraries
+
+```{r library, include=TRUE, warning=FALSE, message=FALSE}
+library(Chromatograms)
+library(Spectra)
+library(xcms)
+library(MsIO)
+library(MsExperiment)
+
+source("rt_analysis_function.R")
+```
+
+```{r cores-cluster}
+# cluster parallel setting
+bpparam <- MulticoreParam(workers = parallel::detectCores() - 1)
+```
+
+# Full Data Objects
+
+## Load Full Data
+
+```{r load-full-data}
+if (!file.exists("object/sp_full.RData")) {
+  sp_afekta <- load_data(lab = "afekta", study_group = "HE")
+  sp_hmgu <- load_data(lab = "hmgu", study_group = "HE")
+  sp_icl <- load_data(lab = "icl", study_group = "HE")
+  sp_cembio <- load_data(lab = "cembio", study_group = "HE")
+
+  sp_full <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+  save(sp_full, file = "object/sp_full.RData")
+  rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+} else {
+  load("object/sp_full.RData")
+}
+```
+
+## Create Base Peak Chromatogram (BPC) - Full Data
+
+```{r load-bpc-full}
+if(!file.exists("object/bpc_full.RData")) {
+  bpc_full <- Chromatograms(sp_full, summarize.method = "max",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab"))
+  bpc_full <- setBackend(bpc_full, ChromBackendMemory())
+  save(file = "object/bpc_full.RData", bpc_full)
+} else {
+  load("object/bpc_full.RData")
+}
+```
+
+## Create Total Ion Current (TIC) - Full Data
+
+```{r load-tic-full}
+if (!file.exists("object/tic_full.RData")) {
+  tic_full <- Chromatograms(sp_full, summarize.method = "sum",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab"))
+  tic_full <- setBackend(tic_full, ChromBackendMemory())
+  save(file = "object/tic_full.RData", tic_full)
+} else {
+  load("object/tic_full.RData")
+}
+```
+
+# Detected Signal Objects
+
+## Load Detected Signal Data
+
+```{r load-detect}
+if (!file.exists("object/sp_full_detect.RData")) {
+  bpparam <- MulticoreParam(8) # for the cluster
+  sp_afekta <- detect_signal(lab = "afekta", study_group = "HE",
+                             annotated = FALSE, bpparam = bpparam)
+  save(sp_afekta, file = "object/sp_afekta.RData")
+  rm(sp_afekta)
+
+  sp_hmgu <- detect_signal(lab = "hmgu", study_group = "HE",
+                           annotated = FALSE, bpparam = bpparam)
+  save(sp_hmgu, file = "object/sp_hmgu.RData")
+  rm(sp_hmgu)
+
+  sp_icl <- detect_signal(lab = "icl", study_group = "HE",
+                          annotated = FALSE, bpparam = bpparam)
+  save(sp_icl, file = "object/sp_icl.RData")
+  rm(sp_icl)
+
+  sp_cembio <- detect_signal(lab = "cembio", study_group = "HE",
+                             annotated = FALSE, bpparam = bpparam)
+  save(sp_cembio, file = "object/sp_cembio.RData")
+
+  load("object/sp_hmgu.RData")
+  load("object/sp_afekta.RData")
+  load("object/sp_icl.RData")
+
+  sp_full_detect <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+  save(sp_full_detect, file = "object/sp_full_detect.RData")
+  rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+} else {
+  load("object/sp_full_detect.RData")
+}
+```
+
+## Create Base Peak Chromatogram (BPC) - Detected Signal
+
+```{r load-bpc-detect}
+if (!file.exists("object/bpc_detect.RData")) {
+  bpc_detect <- Chromatograms(sp_full_detect, summarize.method = "max",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("lab", "mixture"))
+  bpc_detect <- setBackend(bpc_detect, ChromBackendMemory())
+  save(file = "object/bpc_detect.RData", bpc_detect)
+} else {
+  load("object/bpc_detect.RData")
+}
+```
+
+## Create Total Ion Current (TIC) - Detected Signal
+
+```{r load-tic-detect}
+if (!file.exists("object/tic_detect.RData")) {
+  tic_detect <- Chromatograms(sp_full_detect, summarize.method = "sum",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab"))
+  tic_detect <- setBackend(tic_detect, ChromBackendMemory())
+  save(file = "object/tic_detect.RData", tic_detect)
+} else {
+  load("object/tic_detect.RData")
+}
+```
+
+# Annotated Signal Objects
+
+## Load Annotations
+
+```{r load-annotations}
+study_group <- "HE"
+res_afekta <- read.csv(file.path("..", "4_library_generation", "afekta",
+                                 study_group, "ring_trial_library_HE.csv"))
+res_hmgu <- read.csv(file.path("..", "4_library_generation", "hmgu",
+                               study_group, "ring_trial_library_HE.csv"))
+res_icl <- read.csv(file.path("..", "4_library_generation", "icl",
+                               study_group, "ring_trial_library_HE.csv"))
+res_cembio <- read.csv(file.path("..", "4_library_generation", "cembio",
+                                 study_group, "ring_trial_library_HE.csv"))
+```
+
+## Load Annotated Signal Data
+
+```{r an_signal_sp}
+if (!file.exists("object/sp_full_ann.RData")) {
+  bpparam <- MulticoreParam(8)
+  sp_afekta <- detect_signal(lab = "afekta", study_group = study_group,
+                             annotated = TRUE, bpparam = bpparam)
+  sp_hmgu <- detect_signal(lab = "hmgu", study_group = study_group,
+                           annotated = TRUE, bpparam = bpparam)
+  sp_icl <- detect_signal(lab = "icl", study_group = study_group,
+                          annotated = TRUE, bpparam = bpparam)
+  sp_cembio <- detect_signal(lab = "cembio", study_group = study_group,
+                             annotated = TRUE, bpparam = bpparam)
+  sp_full_ann <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+  save(sp_full_ann, file = "object/sp_full_ann.RData")
+  rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+} else {
+  load("object/sp_full_ann.RData")
+}
+```
+
+## Create Base Peak Chromatogram (BPC) - Annotated Signal
+
+```{r load-bpc-ann}
+if (!file.exists("object/bpc_ann.RData")) {
+  bpc_ann <- Chromatograms(sp_full_ann, summarize.method = "max",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab"))
+  bpc_ann <- setBackend(bpc_ann, ChromBackendMemory())
+  save(file = "object/bpc_ann.RData", bpc_ann)
+} else {
+  load("object/bpc_ann.RData")
+}
+```
+
+## Create Total Ion Current (TIC) - Annotated Signal
+
+```{r load-tic-ann}
+if (!file.exists("object/tic_ann.RData")) {
+  tic_ann <- Chromatograms(sp_full_ann, summarize.method = "sum",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab"))
+  tic_ann <- setBackend(tic_ann, ChromBackendMemory())
+  save(file = "object/tic_ann.RData", tic_ann)
+} else {
+  load("object/tic_ann.RData")
+}
+```
+
+# Peak Analysis Objects
+
+## Load TIC Full Spectra
+
+```{r load-tic-full-spectra}
+if (!file.exists("object/tic_full_spectra.RData")) {
+  load("object/sp_full.RData")
+  sp_full <- filterEmptySpectra(sp_full)
+  tic_full <- Chromatograms(sp_full, summarize.method = "sum",
+                       factorize.by= "dataOrigin",
+                       spectraVariables = c("mixture", "lab"))
+  save(tic_full, file = "object/tic_full_spectra.RData")
+} else {
+  load("object/tic_full_spectra.RData")
+}
+```
+
+## Extract EICs for Detected Peaks
+
+```{r peak-table}
+res_afekta$lab <- "afekta"
+res_hmgu$lab <- "hmgu"
+res_icl$lab <- "icl"
+res_cembio$lab <- "cembio"
+
+peak_table <- rbind(res_hmgu, res_afekta, res_icl, res_cembio)
+
+colnames(peak_table)[1] <- "chrom_peak_id"
+colnames(peak_table)[4:7] <- c("mzMin", "mzMax", "rtMin", "rtMax")
+peak_table$mzMin <- peak_table$mzMin - 0.003
+peak_table$mzMax <- peak_table$mzMax + 0.003
+peak_table$rtMin <- peak_table$rtMin - 3
+peak_table$rtMax <- peak_table$rtMax + 3
+peak_table$polarity <- ifelse(peak_table$polarity == "pos", 1, 0)
+```
+
+```{r load-eics-detected, warning = FALSE}
+if (!file.exists("object/eics_detected.RData")) {
+  eics <- chromExtract(tic_full, peak.table = peak_table,
+                       by = c("polarity", "lab", "mixture"))
+  eics <- setBackend(eics, ChromBackendMemory())
+  eics <- imputePeaksData(eics, method = "linear")
+  eics <- applyProcessing(eics)
+  save(eics, file = "object/eics_detected.RData")
+} else {
+  load("object/eics_detected.RData")
+}
+```
+
+# Summary
+
+All objects have been created and saved to the `object/` directory:
+
+- `sp_full.RData`: Full spectra data from all labs
+- `bpc_full.RData`: Base peak chromatograms (full data)
+- `tic_full.RData`: Total ion chromatograms (full data)
+- `sp_afekta.RData`, `sp_hmgu.RData`, `sp_icl.RData`, `sp_cembio.RData`: Individual lab detected signals
+- `sp_full_detect.RData`: Combined detected signal data
+- `bpc_detect.RData`: Base peak chromatograms (detected signal)
+- `tic_detect.RData`: Total ion chromatograms (detected signal)
+- `sp_full_ann.RData`: Annotated signal data
+- `bpc_ann.RData`: Base peak chromatograms (annotated signal)
+- `tic_ann.RData`: Total ion chromatograms (annotated signal)
+- `tic_full_spectra.RData`: TIC from full spectra (for peak analysis)
+- `eics_detected.RData`: Extracted ion chromatograms for detected peaks

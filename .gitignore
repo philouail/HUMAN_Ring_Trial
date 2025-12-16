@@ -41,3 +41,4 @@ results/lab_comparison_HE.rmarkdown
 *.rmarkdown
 /5_downstream_analysis/lab_comparison_HE_files
 /5_downstream_analysis/object
+/5_downstream_analysis/global_signal_analysis_files
