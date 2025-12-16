@@ -23,17 +23,24 @@
 library(openxlsx)
 library(dplyr) # Required for bind_rows
 
-process_lab_evidence <- function(lab_name, manual_filename) {
+process_lab_evidence <- function(lab_name) {
   # 1. Setup Paths
-  base_dir <- file.path(lab_name, "results", "HE")
-  pe_path <- file.path(base_dir, "peak_evidence.csv")
-  pg_path <- file.path(base_dir, manual_filename)
+  pe_path <- file.path("2_annotation_auto", lab_name, "HE", "peak_evidence.csv")
+  pg_path <- file.path(
+    "3_annotation_manual",
+    "HE",
+    "1_manual_curation",
+    "lab_report",
+    paste0("annotation_", lab_name, ".xlsx")
+  )
 
   # Output: Saves to current directory with lab name appended
   out_path <- file.path(
-    "results",
-    "raw_lab_sheets",
-    paste0("peak_evidence_rt_grouped_manual_fixed_", lab_name, ".xlsx")
+    "3_annotation_manual",
+    "HE",
+    "1_manual_curation",
+    "fixed_lab_report",
+    paste0("fixed_annotation_", lab_name, ".xlsx")
   )
 
   message(paste0("Processing: ", lab_name))
@@ -126,7 +133,7 @@ process_lab_evidence <- function(lab_name, manual_filename) {
 # EXECUTION
 # ==============================================================================
 
-process_lab_evidence("hmgu", "peak_evidence_rt_grouped_manual_Pualine.xlsx")
-process_lab_evidence("icl", "peak_evidence_rt_grouped_curated_ICL.xlsx")
-process_lab_evidence("afekta", "peak_evidence_rt_grouped_he_Dennisse.xlsx")
-process_lab_evidence("cembio", "peak_evidence_rt_groupedTF.xlsx")
+process_lab_evidence("hmgu")
+process_lab_evidence("icl")
+process_lab_evidence("afekta")
+process_lab_evidence("cembio")

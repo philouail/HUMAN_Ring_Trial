@@ -8,16 +8,18 @@ format: html
 The goal here is to generate *compound annotation libraries* from data of the
 ring trial experiment of the HUMAN_DN.
 
-- A table for MS1 annotation 
+- A table for MS1 annotation
 - A mgf (or msp) file for MS2 level annotation.
 
 Load results table curated by the labs:
 
 ```{r}
 study_group <- "HE" #example HE / FE / Others
-dr <- file.path("results", study_group)
+lab <- "afekta" # example: afekta / cembio / icl
 library(readxl)
-res_table <- read.csv(file.path(dr, "peak_evidence_rt_grouped_he_Dennisse.csv"))
+library(openxlsx)
+res_table <- read.xlsx(file.path("3_annotation_manual", study_group,
+"1_manual_curation", "fixed_lab_report", paste0("fixed_annotation_", lab, ".xlsx")))
 ```
 
 ms2 data:
@@ -27,94 +29,37 @@ library(xcms)
 library(MsIO)
 library(MsExperiment)
 
-source(file.path("setup.R"))
-peak <- read.csv(file.path(dr, "peak_evidence.csv" ))
+source(file.path("1_preprocessing", "setup.R"))
+peak <- read.csv(file.path(
+  "2_annotation_auto",
+  lab, study_group,
+  "peak_evidence.csv"
+))
 table(peak$mixture)
+study_path <- file.path("1_preprocessing", lab, study_group)
+mse <- readMsObject(
+  XcmsExperiment(),
+  AlabasterParam(path = file.path(study_path, "mse")),
+  spectraPath = file.path(study_path, "mzml"))
 
-mse <- readMsObject(XcmsExperiment(), 
-            AlabasterParam(path = file.path(dr, "mse")), 
-            spectraPath = file.path(paste0( study_group, "_mzml/"))) 
 sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
 
 sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
 meta$Mixture <- gsub("\\.", "_", meta$Mixture)
 
-mse2 <- readMsObject(XcmsExperiment(), 
-            AlabasterParam(path = file.path(dr, "mse2")), 
-            spectraPath = file.path(paste0( study_group, "_mzml/")))
+mse2 <- readMsObject(
+  XcmsExperiment(),
+  AlabasterParam(path = file.path(study_path, "mse2")),
+  spectraPath = file.path(study_path, "mzml")
+)
 sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
 sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
 ```
 
-# Clean up data
+# Generate library:
 
-we need to susbet the table just to keep the TRUE values:
-
-```{r}
-n_tot <- nrow(meta) 
-
-## remove NA and filter for TRUE (format was a bit weird)
-res_table <- res_table[!is.na(res_table$T.F.NA), ]
-res_true <- res_table[res_table$T.F.NA == "TRUE", ]
-
-n_tot / nrow(res_true)
-```
-
-Get quick info about annotation ratio.
-
-```{r}
-## Check an example.
-x <- res_true[1, ]
-
-cpds <- unlist(strsplit(x$chrom_peak_id, "\\|"))
-ion <- unlist(strsplit(x$adduct, "\\|"))
-
-## plot them - to quickly check. 
-eic <- chromPeakChromatograms(mse, peaks = cpds,
-                              expandRt = 10,
-                              expandMz = 0
-                              )
-plot(eic)
-```
-
-We seem to have multiple peaks for the same adduct. 
-
-```{r}
-y <- peak[peak$chrom_peak_id %in% cpds, ]
-
-split(y, y$adduct)
-
-l <- split(y, y$adduct)[[1]]
-## keep lowest ppm
-sub <- lapply(split(y, y$adduct),
-              function(l) l[l$ppm_error == min(l$ppm_error), ])
-library(dplyr)
-fin <- data.frame()
-idx <- res_true$target_ChEBI.name == "(3S,5R)-fluvastatin"
-res_true[idx, ]
-```
-
-Summarize each table and take the lowest ppm error. 
-On the whole table.
-
-```{r}
-## do that for all 
-for (i in seq_len(nrow(res_true))) {
-    x <- res_true[i, ]
-    cpds <- unlist(strsplit(x$chrom_peak_id, "\\|"))
-    y <- peak[peak$chrom_peak_id %in% cpds, ]
-    l_mer <- lapply(split(y, y$adduct),
-              function(l) l[l$ppm_error == min(l$ppm_error), ])
-    fin <- rbind(fin, bind_rows(l_mer))
-}
-
-rownames(fin) <- fin$chrom_peak_id
-
-fin
-```
-
-Next: filter for the one that have "ms2_count" column positive. 
+Next: filter for the one that have "ms2_count" column positive.
 
 ```{r}
 fin_ms2 <- fin[fin$ms2_count > 0, ]
@@ -122,27 +67,25 @@ fin_ms2 <- fin[fin$ms2_count > 0, ]
 cpds <- fin_ms2$chrom_peak_id
 ```
 
-# Generate library:
-
-2 injections: 
+2 injections:
 
 ```{r}
-test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2, 
+test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2,
                               waters_data = FALSE)
 
-fin <- fin[, c("mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax", 
+fin <- fin[, c("mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
                "target_ChEBI.name", "target_ChEBI", "target_InChIKey",
                "target_formula", "adduct", "polarity", "ms2_true_count",
                "RTI", "mixture")]
 
 fin$ms2_true_count <- as.logical(fin$ms2_true_count)
 
-colnames(fin) <- c("mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax", 
+colnames(fin) <- c("mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
                    "compound_name", "ChEBI", "InChIKey", "formula",
                    "adduct", "polarity", "matched_to_library", "RTI",
-                   "mixture") 
+                   "mixture")
 
-# export 
+# export
 write.csv(fin, "ring_trial_library_HE.csv") ## This is moved to results/HE
 ```
 
@@ -255,7 +198,7 @@ We need to re-extract the MS2 spectra in order to have this new spectra variable
 available.
 
 ```{r}
-test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2, 
+test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2,
                               waters_data = FALSE)
 #' repeating the data processing
 spec1 <- split(test, test$chrom_peak_id)[[2]]
