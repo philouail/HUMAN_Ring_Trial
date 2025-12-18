@@ -75,13 +75,6 @@ graph LR
       * `naps.csv`: Results of NAPS detection.
       * `mse` and `mse2` objects: *xcms* preprocessed R objects.
 
-:information_source: The lab-specific preprocessing workflow files should be
-created and adapted from the `generic_preprocessing.qmd` file.
-
-:information_source: The R working directory to execute the individual analyses
-should be set to the standard mixture set (e.g., `HE`) within each lab's
-subfolder.
-
 ### 🔹 2. Automatic Annotation (`2_annotation_auto/`)
 
 *Goal: Generate initial evidence for metabolite identification.*
@@ -90,9 +83,6 @@ subfolder.
   and MS2 spectra against libraries.
   * **Key Output:** `peak_evidence.csv` and `peak_evidence_rt_grouped.csv`
   (intermediate files used for the next step).
-
-:information_source: The folder structure is similar to the one
-from 1. Preprocessing with lab- and mixture set-specific workflow files.
 
 ### 🔹 3. Manual Curation (`3_annotation_manual/`)
 
