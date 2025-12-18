@@ -1,0 +1,1114 @@
+---
+title: "Global Signal Analysis - Positive Mode"
+format: html
+editor_options:
+  chunk_output_type: console
+---
+
+### TODOS
+- Separate POS and NEG plots
+- introduce the setups table and use it to describe inferences.
+- Introduce statistical test for the differences observed.
+- simplify plots into function ?
+- what else ??
+
+# Introduction
+
+In this analysis, I aim to create **Chromatograms objects** from the
+preprocessed LC-MS data, primarily using the functionality provided by the
+**Chromatograms package**. The main goal is to compare full and extracted data
+across different labs to understand how LC and MS setups influence the results.
+
+The comparison will proceed in multiple steps:
+
+1. **Full Data Analysis**:
+
+   - Evaluate basic metrics such as BPC, TIC, and median intensity across
+     retention time (RT) bins.
+   - Compute basic similarity metrics to assess data consistency across labs.
+
+1. **Detected Signal Analysis**:
+
+   - Focus on signals detected by peak picking algorithms, excluding baseline
+     noise.
+   - Recompute the same metrics and similarity measures as in the full data
+     analysis.
+   - This step aims to highlight differences in sensitivity and peak detection
+     efficiency across labs. We hope to get more clear information on setup
+     specificity.
+
+2. **Annotated Signal Analysis**:
+
+   - Use lab-provided annotations to extract only "annotated" signals.
+   - Recompute the same metrics and similarity measures.
+   - Examine EICs of annotated peaks and calculate a variety of metrics for
+     inter-lab comparison.
+   - Save these results for later use in a separate peak similarity analysis
+     workflow, which will require evaluating multiple aspects of the data.
+
+Currently, only harmonized method data is available, meaning the samples were
+run using the same column and protocol. Therefore, most observed differences
+are expected to originate from variations in MS setups.
+
+For now, this analysis focuses solely on the **human endosome mixture**, but
+the workflow is designed to be extendable. A separate R script,
+`rt_analysis_function.R`, contains custom functions used in this workflow.
+
+
+## Load libraries
+
+```{r library, include=TRUE, warning=FALSE, message=FALSE}
+library(Chromatograms)
+library(Spectra)
+library(xcms)
+library(MsIO)
+library(MsExperiment)
+library(vioplot)
+library(dtw)
+library(dtwclust)
+library(proxy) # Added for efficient DTW calculation
+library(pracma) ## easy find peak function, switch to MsCoreUtils
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(ggbeeswarm)
+
+source("rt_analysis_function.R")
+eval_sim <- FALSE  ## change to TRUE to eval similarity analysis
+```
+
+```{r, cores-cluster}
+# cluster parallel setting
+bpparam <- MulticoreParam(workers = parallel::detectCores() - 1)
+```
+
+# Full data analysis
+
+```{r}
+#polarity set up
+pol <- 1L
+```
+
+Below I load the preprocessed data from each lab.
+
+Objects are created in `object_creation.qmd`. Load the full data:
+
+```{r load-full-data}
+load(file.path("5_downstream_analysis", "object/sp_full.RData"))
+sp_full <- sp_full[sp_full$polarity == pol]
+```
+
+If we summarise the number of MS1 spectra per lab:
+
+```{r nb-spectra-full}
+table(sp_full$lab)
+```
+
+Below we summarize the rtime range per lab (in seconds).
+They should be fairly similar for the harmonized method as we agreed on a
+range during preprocessing.
+
+```{r rt-range-full}
+lapply(split(rtime(sp_full), sp_full$lab), range)
+```
+
+Insert table with experimental info later below:
+
+```{r}
+setup <- read.csv("5_downstream_analysis/lab_setup_phase1.csv", skip = 1)
+setup
+```
+
+## Basic metrics
+
+### Base Peak Chromatogram (BPC) area
+
+- separate pos and neg for plots
+
+```{r load-bpc-full}
+load("object/bpc_full.RData")
+bpc_full <- bpc_full[bpc_full$polarity == pol]
+```
+
+Below we compute the BPC area per mixture per lab and summarize across mixtures
+by summing the intensity values.
+
+Inference from Full BPC:
+The BPC area on full data represents the total intensity of the most dominant
+ion at every scan, including baseline and chemical noise.
+
+```{r sum-bpc-full, eval=TRUE}
+# Create a data frame for plotting [data from cite: 59]
+plot_data <- data.frame(
+  Lab = bpc_full$lab,
+  Mixture = bpc_full$mixture,
+  BPC_Area = vapply(intensity(bpc_full), sum, numeric(1), na.rm = TRUE)
+)
+
+# Create an advanced plot
+ggplot(plot_data, aes(x = Lab, y = log2(BPC_Area), fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Full Data BPC Across Laboratories (Positive Mode)",
+    subtitle = "Points colored by mixture type",
+    x = "Laboratory",
+    y = "Log2(BPC Area)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Note: this above is not normalized.
+
+Next compute CV per mixture across lab:
+Here normalize by standard deviation divided by mean. We are hoping to get some
+information about the agreement of the BPC signal across lab.
+
+```{r cv-full ,eval=TRUE}
+sbpc <- vapply(intensity(bpc_full), sum, numeric(1), na.rm = TRUE)
+cv_per_mix <- tapply(sbpc, bpc_full$mixture, function(x) sd(x, na.rm =TRUE) /
+                       mean(x, na.rm =TRUE))
+```
+
+Not sure how useful this is, but plot it anyway.
+
+### Total Ion Current (TIC) area
+
+- separate pos and neg for plot
+
+```{r load-tic-full}
+load("object/tic_full.RData")
+tic_full <- tic_full[tic_full$polarity == pol]
+```
+
+Inference from Full TIC
+The TIC area on full data sums all ion intensities in every scan. This is a
+measure of the total ion flux, or the total amount of "signal" (including all
+noise, background, and analytes) detected by the instrument. Large differences
+suggest a significantly higher overall signal response, which could be due to
+higher background or higher sensitivity.
+
+```{r int-tic-full, eval=TRUE}
+stic <- vapply(intensity(tic_full), sum, numeric(1), na.rm = TRUE) # Need to define stic
+plot_data_tic <- data.frame(
+  Lab = tic_full$lab,
+  Mixture = tic_full$mixture,
+  TIC_Area = stic
+)
+
+# Create an advanced plot for TIC
+ggplot(plot_data_tic, aes(x = Lab, y = log2(TIC_Area), fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Full Data TIC Across Laboratories (Positive Mode)",
+    subtitle = "Points colored by mixture type",
+    x = "Laboratory",
+    y = "Log2(TIC Area)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Note: again this is not normalized.
+
+### ratio BPC / TIC
+
+- separate pos and neg for plot
+
+This metric, when applied to full data, is a proxy for data
+complexity and baseline noise. A low ratio (e.g., 0.1-0.2) indicates a
+"complex" signal, where the total intensity (TIC) is spread across many
+different m/z values, and no single ion dominates. A higher ratio would suggest
+a "cleaner" run where, even in the baseline, a few ions dominate.
+
+=> Gives an idea of the complexity of the signal.
+
+```{r ratio-full-across, eval=TRUE}
+ratio_bpc_tic <- sbpc / stic
+ratio_bpc_tic
+
+# Example for BPC/TIC ratio
+kruskal.test(ratio_bpc_tic ~ tic_full$lab)
+
+plot_data_ratio <- data.frame(
+  Lab = tic_full$lab,
+  Mixture = tic_full$mixture,
+  BPC_TIC_Ratio = ratio_bpc_tic
+)
+
+# Create an advanced plot for BPC/TIC ratio
+ggplot(plot_data_ratio, aes(x = Lab, y = BPC_TIC_Ratio, fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Full Data BPC/TIC Ratio Across Laboratories (Positive Mode)",
+    subtitle = "Points colored by mixture type",
+    x = "Laboratory",
+    y = "BPC/TIC Ratio"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+## tic/bpc ratio along rt
+
+- Separate pos and neg for plot
+
+Inference from Full BPC/TIC Ratio along RT
+This is a "fingerprint" of the baseline behavior.
+
+BPC/TIC Ratio Plot:
+We are looking for differences in the shape of these profiles. A lab with a
+consistently lower profile has a more complex, "messy" baseline
+across the entire gradient. A spiky profile, suggests its
+baseline is cleaner, and the ratio only drops in specific, complex regions.
+
+Data Point Coverage Plot: This shows the density of data points (scans)
+across the run.
+
+```{r ratio-full, eval = TRUE, fig.width=12, fig.height=10}
+# Compute median BPC/TIC ratio per RT bin
+compute_bin_ratio <- function(rt, int_tic, int_bpc, n_bins = 30) {
+  bins <- cut(rt, breaks = n_bins)
+  tapply(seq_along(rt), bins, function(idx) {
+    median(int_bpc[idx] / int_tic[idx], na.rm = TRUE)
+  })
+}
+
+# Compute number of data points per RT bin
+compute_bin_count <- function(rt, n_bins = 30) {
+  bins <- cut(rt, breaks = n_bins)
+  tapply(seq_along(rt), bins, length)
+}
+
+# Preallocate containers
+ratio_all <- sapply(seq_along(tic_full), function(i) {
+  rt <- rtime(tic_full[i])[[1]]
+  int_tic <- intensity(tic_full[i])[[1]]
+  int_bpc <- intensity(bpc_full[i])[[1]]
+
+  compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
+})
+
+coverage_all <- sapply(seq_along(tic_full), function(i) {
+  rt <- rtime(tic_full[i])[[1]]
+  compute_bin_count(rt, n_bins = 30)
+})
+
+# Assign names
+colnames(ratio_all) <- paste(tic_full$lab, tic_full$mixture, "pol:", tic_full$polarity, sep = "_")
+colnames(coverage_all) <- colnames(ratio_all)
+
+ratio_df <- as.data.frame(ratio_all) %>%
+  mutate(rt_bin = 1:n()) %>%
+  pivot_longer(
+    cols = -rt_bin,
+    names_to = "sample_id",
+    values_to = "value"
+  ) %>%
+  mutate(metric = "BPC/TIC Ratio")
+
+coverage_df <- as.data.frame(coverage_all) %>%
+  mutate(rt_bin = 1:n()) %>%
+  pivot_longer(
+    cols = -rt_bin,
+    names_to = "sample_id",
+    values_to = "value"
+  ) %>%
+  mutate(metric = "Data Point Coverage")
+
+sample_info <- data.frame(
+  sample_id = colnames(ratio_all),
+  lab = tic_full$lab,
+  mixture = tic_full$mixture
+)
+
+plot_data <- bind_rows(ratio_df, coverage_df) %>%
+  left_join(sample_info, by = "sample_id")
+
+plot_data$metric <- factor(plot_data$metric,
+                           levels = c("BPC/TIC Ratio", "Data Point Coverage"))
+
+ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
+  geom_line(alpha = 0.7, linewidth = 1) +
+  facet_grid(metric ~ mixture, scales = "free_y") +
+  labs(
+    title = "Chromatographic Fingerprint Comparison (Full Data - Positive Mode)",
+    subtitle = "BPC/TIC Ratio and Data Point Coverage by Lab and Mixture",
+    x = "Retention Time Bin",
+    y = "Value (Ratio or Count)",
+    color = "Laboratory"
+  ) +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 12)
+  )
+
+## for later similarity analysis i need to remove NA
+ratio_all[is.na(ratio_all)] <- 0
+```
+
+### STOPPED HERE
+
+## Chromatogram  Similarity
+
+- honestly no idea of what to do with this...
+
+For this we use Dynamic Time Warping (DTW), which measures similarity between
+two chromatograms (time series) while being robust to small shifts in
+retention time. This makes it ideal for comparing runs where RTs may drift
+slightly. A low "normalizedDistance" means the two chromatograms have a very
+similar shape.
+
+### ratio along retention time.
+
+Inference from Full Ratio DTW
+This is a more robust comparison. It compares the "fingerprints of complexity"
+from the previous section. If labs cluster here, it means their baseline noise
+profile is fundamentally similar across the entire gradient (e.g., their noise
+levels change in the same way as the gradient changes).
+
+```{r sim-ratio-full, eval= eval_sim, fig.width=8, fig.height=10}
+# Here, ratio_all has bins as rows and samples as columns.
+# We need to transpose it for proxy::dist (samples as rows).
+sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all),
+                                        method = "dtw_lb",
+                                        window.type = "sakoechiba",
+                                        window.size = 5)) # Smaller window for 30 bins
+
+labels <- colnames(ratio_all)
+rownames(sim_matrix_med) <- labels
+colnames(sim_matrix_med) <- labels
+
+## clustering
+hc_med <- hclust(as.dist(sim_matrix_med))
+plot(hc_med, main = "DTW clustering of full tic/bpc ratio")
+
+heatmap(sim_matrix_med, main = "DTW similarity of full tic/bpc ratio")
+```
+
+The labels make it very hard to read. but it is very fast to run now.
+
+```{r, rm-full}
+## delete the memory hungry object
+rm(tic_full, bpc_full, sp_full)
+```
+
+# Detected signal analysis
+
+This signal is essentially keeping the rt and mz area from peak detection.
+Now it reflects total detected signal (sensitivity of detection).
+
+Easier to compare labs because baseline noise is excluded.
+Differences now relate more to how well peaks were detected and instrument
+sensitivity rather than background noise.
+
+Load the results sheet below
+
+```{r load-detect}
+load("object/sp_full_detect.RData")
+sp_full_detect <- sp_full_detect[sp_full_detect$polarity == pol]
+```
+
+Summarize the number of MS1 spectra per lab:
+
+```{r nb-spectra-detect}
+table(sp_full_detect$lab) ## compare with sp_full
+```
+
+Summarize the rtime range per lab (in seconds):
+
+```{r rt-range-detect}
+lapply(split(rtime(sp_full_detect), sp_full_detect$lab) , range)
+```
+
+## Basic metrics
+
+Now baseline noise and spurious fluctuations are largely removed.
+
+### Base Peak Chromatogram (BPC) area
+
+We generate the BPC from the detected signal.
+
+```{r load-bpc-detect}
+load("object/bpc_detect.RData")
+bpc_detect <- bpc_detect[bpc_detect$polarity == pol]
+```
+
+We summarize the BPC area per mixture per lab by summing the intensity values.
+
+Inference from Detected BPC
+This is a much more meaningful metric than the "full" BPC. It represents
+the sum of the apex intensities of all detected peaks. This is a direct proxy
+for instrument sensitivity and peak detection efficiency. A lab with a higher
+detected BPC is either detecting more peaks or detecting the
+same peaks at a higher intensity. The CV per mixture  quantifies the inter-lab
+variability in this sensitivity.
+
+```{r sum-bpc-detect}
+sbpc <- vapply(intensity(bpc_detect), sum, numeric(1), na.rm = TRUE)
+
+plot_data_bpc_det <- data.frame(
+  Lab = bpc_detect$lab,
+  Mixture = bpc_detect$mixture,
+  BPC_Area = sbpc
+)
+
+ggplot(plot_data_bpc_det, aes(x = Lab, y = log2(BPC_Area), fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Detected BPC Area Across Laboratories (Positive Mode)",
+    subtitle = "Points colored by mixture type",
+    x = "Laboratory",
+    y = "Log2(Detected BPC Area)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Next, we compute the coefficient of variation (CV) per mixture across labs.
+
+```{r cv-detect}
+cv_per_mix_det <- tapply(sbpc, bpc_detect$mixture,
+function(x) sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE))
+plot(cv_per_mix_det, main = "CV of Detected BPC per Mixture")
+```
+
+### Total Ion Current (TIC) area
+
+```{r load-tic-detect}
+load("object/tic_detect.RData")
+tic_detect <- tic_detect[tic_detect$polarity == pol]
+```
+
+We summarize the TIC area per mixture per lab by summing the intensity values.
+
+Inference from Detected TIC
+This represents the sum of the areas of all detected peaks. It is the
+best measure of total quantifiable signal. Unlike the "full" TIC, this
+excludes the baseline. Labs with higher detected TIC are capturing more total
+analyte signal, again pointing to higher sensitivity or better peak detection.
+
+```{r int-tic-detect}
+stic <- vapply(intensity(tic_detect), sum, numeric(1), na.rm = TRUE)
+
+plot_data_tic_det <- data.frame(
+  Lab = tic_detect$lab,
+  Mixture = tic_detect$mixture,
+  TIC_Area = stic
+)
+
+ggplot(plot_data_tic_det, aes(x = Lab, y = log2(TIC_Area), fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Detected TIC Area Across Laboratories (Positive Mode)",
+    subtitle = "Points colored by mixture type",
+    x = "Laboratory",
+    y = "Log2(Detected TIC Area)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### ratio BPC / TIC
+
+Now that we should have gotten rid of baseline and noise signal, the ratio
+should be properly describing the complexity of the detected signal.
+
+Inference from Detected BPC/TIC Ratio:
+
+This measures the **complexity of the detected features**.
+
+A ratio closer to 1 would imply that the detected peaks
+are "pure" (BPC $\approx$ TIC).
+
+A low ratio means that even
+within the detected peak boundaries, the signal is spread across many ions.
+This could be due to co-elution, fragmentation, adducts, or the peak-picking
+algorithm including noisy parts of the peak.
+
+Comparing labs, afekta seems to have a lower ratio, suggesting their detected
+peaks are more complex(more co-elution/fragments) than other labs.
+
+```{r ratio-detect-across}
+ratio_bpc_tic <- sbpc / stic
+
+plot_data_ratio_det <- data.frame(
+  Lab = tic_detect$lab,
+  Mixture = tic_detect$mixture,
+  BPC_TIC_Ratio = ratio_bpc_tic
+)
+
+ggplot(plot_data_ratio_det, aes(x = Lab, y = BPC_TIC_Ratio, fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Detected Data BPC/TIC Ratio Across Laboratories (Positive Mode)",
+    subtitle = "Points colored by mixture type",
+    x = "Laboratory",
+    y = "BPC/TIC Ratio (Detected Signal)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Tic/Bpc ratio along rt
+
+Gives us some kind of chromatographic fingerprint per lab.
+Instead of baseline shape, you’re summarizing where peaks are detected along
+the gradient.
+
+
+Inference from Detected BPC/TIC Ratio along RT
+
+This is a "fingerprint of detected signal."
+
+BPC/TIC Ratio Plot: This shows where in the gradient the detected signal is
+"clean" (high ratio) or "complex" (low ratio).
+
+
+```{r ratio-detect, eval = FALSE, fig.width=12, fig.height=9}
+# Preallocate containers
+ratio_all <- sapply(seq_along(tic_detect), function(i) {
+  rt <- rtime(tic_detect[i])[[1]]
+  int_tic <- intensity(tic_detect[i])[[1]]
+  int_bpc <- intensity(bpc_detect[i])[[1]]
+
+  compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
+})
+
+coverage_all <- sapply(seq_along(tic_detect), function(i) {
+  rt <- rtime(tic_detect[i])[[1]]
+  compute_bin_count(rt, n_bins = 30) ## could adjust this to lower nb of bins
+})
+
+# Assign names
+colnames(ratio_all) <- paste(tic_detect$lab, tic_detect$mixture, "pol:",
+ tic_detect$polarity, sep = "_")
+colnames(coverage_all) <- colnames(ratio_all)
+
+ratio_df <- as.data.frame(ratio_all) %>%
+  mutate(rt_bin = 1:n()) %>%
+  pivot_longer(
+    cols = -rt_bin,
+    names_to = "sample_id",
+    values_to = "value"
+  ) %>%
+  mutate(metric = "BPC/TIC Ratio")
+
+coverage_df <- as.data.frame(coverage_all) %>%
+  mutate(rt_bin = 1:n()) %>%
+  pivot_longer(
+    cols = -rt_bin,
+    names_to = "sample_id",
+    values_to = "value"
+  ) %>%
+  mutate(metric = "Data Point Coverage")
+
+sample_info <- data.frame(
+  sample_id = colnames(ratio_all),
+  lab = tic_detect$lab,
+  mixture = tic_detect$mixture
+)
+
+plot_data <- bind_rows(ratio_df, coverage_df) %>%
+  left_join(sample_info, by = "sample_id")
+
+## plot
+plot_data$metric <- factor(plot_data$metric,
+                           levels = c("BPC/TIC Ratio", "Data Point Coverage"))
+
+ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
+  geom_line(alpha = 0.7, linewidth = 1) +
+  facet_grid(metric ~ mixture, scales = "free_y") +
+  labs(
+    title = "Chromatographic Fingerprint Comparison (Detected Data - Positive Mode)",
+    subtitle = "BPC/TIC Ratio and Data Point Coverage by Lab and Mixture",
+    x = "Retention Time Bin",
+    y = "Value (Ratio or Count)",
+    color = "Laboratory"
+  ) +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 12)
+  )
+
+## for later similarity analysis i need to remove NA
+ratio_all[is.na(ratio_all)] <- 0
+```
+
+
+## Chromatogram  Similarity
+
+### ratio along retention time.
+
+Inference from Detected Ratio DTW
+
+This is a novel metric. It compares the "complexity fingerprint" of only the
+detected signal. Clustering here would mean that labs have a similar pattern
+of complexity for the peaks they detect across the gradient. This is a
+high-level comparison of the quality of the detected features.
+
+```{r, dtw-ratio, eval =eval_sim, fig.width=10, fig.height=10}
+try(library(pheatmap))
+try(library(proxy))
+try(library(dplyr))
+try(library(tidyr))
+
+# Transpose ratio_all so samples are rows
+sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all),
+                                        method = "dtw_lb",
+                                        window.type = "sakoechiba",
+                                        window.size = 5))
+rownames(sim_matrix_med) <- colnames(ratio_all)
+colnames(sim_matrix_med) <- colnames(ratio_all)
+
+annotation_df <- data.frame(
+  Lab = tic_detect$lab,
+  Mixture = tic_detect$mixture
+)
+rownames(annotation_df) <- colnames(ratio_all) # CRITICAL: names must match
+
+
+pheatmap(
+  sim_matrix_med,
+  main = "DTW Similarity of BPC/TIC Ratio (Detected Signal)",
+
+  # Add the annotation bars
+  annotation_row = annotation_df,
+  annotation_col = annotation_df,
+
+  # Hide the unreadable text labels
+  show_rownames = FALSE,
+  show_colnames = FALSE,
+
+  # Improve clustering and color
+  clustering_distance_rows = as.dist(sim_matrix_med),
+  clustering_distance_cols = as.dist(sim_matrix_med),
+  clustering_method = "ward.D2",
+  color = hcl.colors(50, "YlOrRd", rev = TRUE)
+)
+```
+
+!!! adding a column of color by lab would be nice.
+
+
+```{r , rm-detect}
+## delete the memory hungry object
+rm(tic_detect, bpc_detect, sp_full_detect)
+```
+
+# Annotated signal
+
+Here we will ONLY keep the annotated signal.
+
+```{r an_signal_sp}
+load("object/sp_full_ann.RData")
+sp_full_ann <- sp_full_ann[sp_full_ann$polarity == pol]
+```
+
+```{r, rm-ann}
+rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
+```
+
+Summarize the number of MS1 spectra per lab:
+
+```{r nb-spectra-ann}
+table(sp_full_ann$lab)
+```
+
+Summarize the rtime range per lab (in seconds):
+
+```{r rt-range-ann}
+lapply(split(rtime(sp_full_ann), sp_full_ann$lab) , range)
+```
+
+## Basic metrics
+
+### Base Peak Chromatogram (BPC) area
+
+```{r load-bpc-ann}
+load("object/bpc_ann.RData")
+bpc_ann <- bpc_ann[bpc_ann$polarity == pol]
+```
+
+We summarize the BPC area per mixture per lab by summing the intensity values.
+
+Inference from Annotated BPC:
+
+This measures the sum of peak heights (apices) for only the annotated
+standards. This is a direct measure of quantitative sensitivity for the
+target compounds. The high variability shows that for the same compounds,
+some labs get much stronger signals than others. This is a key finding for an
+inter-lab comparison.
+
+```{r sum-bpc-ann}
+sbpc <- vapply(intensity(bpc_ann), sum, numeric(1))
+
+plot_data_bpc_ann <- data.frame(
+  Lab = bpc_ann$lab,
+  Mixture = bpc_ann$mixture,
+  BPC_Area = sbpc
+)
+
+ggplot(plot_data_bpc_ann, aes(x = Lab, y = log2(BPC_Area), fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Annotated BPC Area Across Laboratories (Positive Mode)",
+    subtitle = "Sum of annotated peak heights. Points colored by mixture type.",
+    x = "Laboratory",
+    y = "Log2(Annotated BPC Area)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Next, we compute the coefficient of variation (CV) per mixture across labs.
+
+```{r cv-ann}
+cv_per_mix_ann <- tapply(sbpc, bpc_ann$mixture, function(x)
+  sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE))
+plot(cv_per_mix_ann, main = "CV of Annotated BPC per Mixture")
+```
+
+### Total Ion Current (TIC) area
+
+```{r load-tic-ann}
+load("object/tic_ann.RData")
+tic_ann <- tic_ann[tic_ann$polarity == pol]
+```
+
+We summarize the TIC area per mixture per lab by summing the intensity values.
+
+This measures the sum of peak areas for only the annotated standards. This is
+the best metric for overall quantitative agreement.
+
+```{r int-tic-ann}
+stic <- vapply(intensity(tic_ann), sum, numeric(1))
+
+plot_data_tic_ann <- data.frame(
+  Lab = tic_ann$lab,
+  Mixture = tic_ann$mixture,
+  TIC_Area = stic
+)
+
+ggplot(plot_data_tic_ann, aes(x = Lab, y = log2(TIC_Area), fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Annotated TIC Area Across Laboratories (Positive Mode)",
+    subtitle = "Sum of annotated peak areas. Points colored by mixture type.",
+    x = "Laboratory",
+    y = "Log2(Annotated TIC Area)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### ratio BPC / TIC
+
+Now we get the ratio for the spiked compound that were detected.
+
+Inference from Annotated BPC/TIC Ratio
+This is a critical metric for peak purity. This ratio (Apex Height / Peak Area,
+scaled) for known compounds tells us how "clean" those peaks are.
+
+A high ratio suggests a sharp, pure peak where the apex dominates the area.
+
+A low ratio suggests a broader, tailing, or co-eluting peak, where the apex
+intensity is low relative to the total peak area.
+
+
+```{r ratio-ann-across}
+ratio_bpc_tic <- sbpc / stic
+
+plot_data_ratio_ann <- data.frame(
+  Lab = tic_ann$lab,
+  Mixture = tic_ann$mixture,
+  BPC_TIC_Ratio = ratio_bpc_tic
+)
+
+ggplot(plot_data_ratio_ann, aes(x = Lab, y = BPC_TIC_Ratio, fill = Lab)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_quasirandom(aes(color = Mixture), dodge.width = 0.9, size = 2) +
+  labs(
+    title = "Annotated Data BPC/TIC Ratio Across Laboratories (Positive Mode)",
+    subtitle = "Points colored by mixture type",
+    x = "Laboratory",
+    y = "BPC/TIC Ratio (Annotated Signal)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+## tic/bpc ratio along rt
+
+Inference from Annotated BPC/TIC Ratio along RT
+This plot shows where the annotated standards are eluting and what their peak
+purity (BPC/TIC ratio) is at that location.
+
+BPC/TIC Ratio Plot: The plot should be "spiky," not continuous, as it only
+contains data from annotated peaks. The height of the spikes in each bin
+reflects the average "purity" of the standards eluting there. We can see the
+'icl' profile is consistently lower than the others, confirming its peaks are
+less "pure" (lower BPC/TIC ratio) across the entire gradient.
+
+Data Point Coverage Plot: This is a key validation plot. It shows how many
+annotated standards were detected in each RT bin. It confirms that all labs
+are finding the standards in roughly the same elution regions (e.g., bins 5-15).
+
+```{r ratio-ann, eval = FALSE, fig.width=12, fig.height=9}
+# Preallocate containers
+ratio_all <- sapply(seq_along(tic_ann), function(i) {
+  rt <- rtime(tic_ann[i])[[1]]
+  int_tic <- intensity(tic_ann[i])[[1]]
+  int_bpc <- intensity(bpc_ann[i])[[1]]
+
+  compute_bin_ratio(rt, int_tic, int_bpc, n_bins = 30)
+})
+
+coverage_all <- sapply(seq_along(tic_ann), function(i) {
+  rt <- rtime(tic_ann[i])[[1]]
+  compute_bin_count(rt, n_bins = 30)
+})
+
+# Assign names
+colnames(ratio_all) <- paste(tic_ann$lab, tic_ann$mixture, "pol:",
+                             tic_ann$polarity, sep = "_")
+colnames(coverage_all) <- colnames(ratio_all)
+
+
+ratio_df <- as.data.frame(ratio_all) %>%
+  mutate(rt_bin = 1:n()) %>%
+  pivot_longer(
+    cols = -rt_bin,
+    names_to = "sample_id",
+    values_to = "value"
+  ) %>%
+  mutate(metric = "BPC/TIC Ratio")
+
+
+coverage_df <- as.data.frame(coverage_all) %>%
+  mutate(rt_bin = 1:n()) %>%
+  pivot_longer(
+    cols = -rt_bin,
+    names_to = "sample_id",
+    values_to = "value"
+  ) %>%
+  mutate(metric = "Annotated Peak Count") # Renamed for clarity
+
+sample_info <- data.frame(
+  sample_id = colnames(ratio_all),
+  lab = tic_ann$lab,
+  mixture = tic_ann$mixture
+)
+
+plot_data <- bind_rows(ratio_df, coverage_df) %>%
+  left_join(sample_info, by = "sample_id")
+
+plot_data$metric <- factor(plot_data$metric,
+                           levels = c("BPC/TIC Ratio", "Annotated Peak Count"))
+
+ggplot(plot_data, aes(x = rt_bin, y = value, color = lab, group = sample_id)) +
+  geom_line(alpha = 0.7, linewidth = 1) +
+  facet_grid(metric ~ mixture, scales = "free_y") +
+  labs(
+    title = "Chromatographic Fingerprint Comparison (Annotated Data - Positive Mode)",
+    subtitle = "BPC/TIC Ratio and Peak Count by Lab and Mixture",
+    x = "Retention Time Bin",
+    y = "Value (Ratio or Count)",
+    color = "Laboratory"
+  ) +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 12)
+  )
+
+## for later similarity analysis i need to remove NA
+ratio_all[is.na(ratio_all)] <- 0
+```
+
+Note: ye we will probably get rid of this, it's not readable anymore.
+
+## Chromatogram  Similarity
+
+This compares the "purity fingerprint" (from the binned BPC/TIC ratio plot)
+between labs. Labs that cluster here have a similar pattern of peak purity
+across the gradient for the annotated standards.
+
+### ratio along retention time.
+
+```{r ratio-sim , eval=eval_sim}
+sim_matrix_med <- as.matrix(proxy::dist(t(ratio_all),
+                                        method = "dtw_lb",
+                                        window.type = "sakoechiba",
+                                        window.size = 5))
+
+labels <- colnames(ratio_all)
+rownames(sim_matrix_med) <- labels
+colnames(sim_matrix_med) <- labels
+
+# clustering
+hc_med <- hclust(as.dist(sim_matrix_med))
+plot(hc_med, labels = labels, main = "DTW clustering of BPC/TIC ratio (Annotated)")
+
+# heatmap
+heatmap(sim_matrix_med, labRow = labels, labCol = labels,
+        main = "DTW similarity of BPC/TIC ratio (Annotated)")
+```
+
+Plot summary plots:
+
+```{r}
+png("figure/tic_comparison_plot_pos.png", width = 10, height = 6,
+    units = "in", res = 300)
+plot_signal_comparison("TIC", 1)
+dev.off()
+
+png("figure/bpc_comparison_plot_pos.png", width = 10, height = 6,
+    units = "in", res = 300)
+plot_signal_comparison("BPC", 1)
+dev.off()
+```
+
+
+# Background/other signal
+
+Here i need to load previous object and generate summary of "noise"
+
+-   total signal - all detected peak signal
+
+This value (dif_int2) represents the total baseline signal
+(chemical and electronic noise) that was excluded by the peak picking
+algorithm. A lab with a high value here (like 'afekta') has a much "noisier"
+baseline that was successfully removed.
+
+```{r noise-all}
+load("object/tic_full.RData")
+tic_full <- tic_full[tic_full$polarity == pol]
+load("object/tic_detect.RData")
+tic_detect <- tic_detect[tic_detect$polarity == pol]
+
+stic_full <- vapply(intensity(tic_full), sum, numeric(1))
+stic_detect <- vapply(intensity(tic_detect), sum, numeric(1))
+
+bg <- stic_full - stic_detect
+ratio <- stic_detect/ bg
+
+ggplot(data.frame(Lab = tic_full$lab, Ratio =log2(ratio)), aes(x = Lab, y = Ratio, fill = Lab)
+) +
+  geom_violin(alpha = 0.5, trim = TRUE) +
+  labs(
+    title = "Detected vs Background TIC Area Ratio Across Laboratories (Positive Mode)",
+    x = "Laboratory",
+    y = "Detected / Background TIC Area Rati (log2)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+-   total signal - annotated peak signal
+
+This value (dif_int3) represents all signal except the annotated standards.
+This includes the baseline noise and all the unannotated peaks.
+
+```{r noise-ann}
+load("object/tic_ann.RData")
+tic_ann <- tic_ann[tic_ann$polarity == pol]
+stic_ann <- vapply(intensity(tic_ann), sum, numeric(1))
+dif_int3 <- stic_full - stic_ann
+ratio <- stic_ann/ dif_int3
+ggplot(data.frame(Lab = tic_full$lab, Ratio =log2(ratio)), aes(x = Lab, y = Ratio, fill = Lab)
+) +
+  geom_violin(alpha = 0.5, trim = TRUE) +
+  labs(
+    title = "Annotated vs Other TIC Area Ratio Across Laboratories (Positive Mode)",
+    x = "Laboratory",
+    y = "Annotated / Other TIC Area Ratio (log2)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+- detected - annotated peak signal
+
+This (dif_int4) is a very insightful metric for my thesis. It represents the
+total signal from unannotated peaks. This is the "unknown" but "real" chemical
+signal that was detected.
+
+A lab with a high value (like 'icl') is detecting more "other" compounds.
+This could be due to:
+Higher sensitivity, allowing it to see more low-level unknown compounds.
+Different fragmentation/adduct formation, meaning it's detecting more variants
+of the annotated standards, which are not themselves annotated.
+
+A lab with a low value (like 'hmgu') is detecting less signal outside of the
+annotated standards.
+
+```{r noise-detect-ann}
+ratio <- stic_ann/ (stic_detect - stic_ann)
+ggplot(data.frame(Lab = tic_full$lab, Ratio =log2(ratio)),
+       aes(x = Lab, y = Ratio, fill = Lab)
+) +
+  geom_violin(alpha = 0.5, trim = TRUE) +
+  labs(
+    title = "Annotated vs Other Detected TIC Area Ratio Across Laboratories (Positive Mode)",
+    x = "Laboratory",
+    y = "Annotated / Other Detected TIC Area Ratio (log2)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+# Peak Analysis
+
+Peak feature calculation and analysis is performed in `peak_feature_calculation.qmd`.
+
+Load the peak report:
+
+```{r load-peak-report}
+load("object/full_peak_report.RData")
+```
+
+Summary of peak features by lab:
+
+```{r peak-feature-summary}
+cat("Number of peaks per lab:\n")
+table(full_peak_report$lab)
+
+cat("\nEntropy summary by lab:\n")
+split(full_peak_report$entropy, full_peak_report$lab) |>
+  lapply(summary)
+
+cat("\nFWHM summary by lab:\n")
+split(full_peak_report$fwhm, full_peak_report$lab) |>
+  lapply(summary)
+```
+
+See `peak_feature_calculation.qmd` for detailed peak feature analysis including:
+
+- EIC extraction and preprocessing
+- Peak metric calculation (entropy, FWHM, tailing factor, etc.)
+- Retention time stability analysis
+- Quantitative robustness assessment
+- PCA on peak features
+
+Next steps for peak similarity analysis:
+
+- Mass accuracy check
+- Blind clustering to group adducts
+- Similarity comparison using zeros grouping, RT scan order differences

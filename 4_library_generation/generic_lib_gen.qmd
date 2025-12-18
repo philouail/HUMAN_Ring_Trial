@@ -1,0 +1,385 @@
+---
+title: "Generic Library Generation Template"
+format: html
+---
+
+# Introduction
+
+This is a generic template for generating compound annotation libraries from ring trial data.
+Each lab should adapt this template by setting `lab` and `study_group` appropriately.
+
+**Purpose:**
+- Generate a table for MS1 annotation
+- Generate MGF (or MSP) files for MS2 level annotation
+
+**Usage:**
+Copy this file to your lab-specific folder and update the `lab` and `study_group` variables at the top.
+The template will then load data from the standardized directory structure:
+- MS1/MS2 processed data: `1_preprocessing/<lab>/<study_group>/`
+- Manual curation results: `3_annotation_manual/<study_group>/`
+- Automatic annotation results: `2_annotation_auto/<lab>/<study_group>/`
+
+---
+
+# Setup
+
+Load the configuration and define paths:
+
+```{r}
+# USER: Update these variables
+study_group <- "HE"  # example: "HE", "FE", "Others"
+lab <- "afekta"      # example: "afekta", "cembio", "icl", "hmgu"
+
+# Derived paths (automatic)
+study_path <- file.path("1_preprocessing", lab, study_group)
+output_path <- file.path("4_library_generation", lab, study_group)
+
+# Check that paths exist
+if (!dir.exists(study_path)) {
+  stop(paste("Study path does not exist:", study_path))
+}
+
+# Create output directory if it doesn't exist
+if (!dir.exists(output_path)) {
+  dir.create(output_path, recursive = TRUE)
+}
+```
+
+---
+
+# Load Curated Results Table
+
+Load the results table that was manually curated by the lab:
+
+```{r}
+library(readxl)
+library(openxlsx)
+
+# Construct filename with lab-specific name
+res_table <- read.xlsx(
+  file.path(
+    "3_annotation_manual",
+    study_group,
+    "1_manual_curation",
+    "fixed_lab_report",
+    paste0("fixed_annotation_", lab, ".xlsx")
+  )
+)
+
+head(res_table)
+```
+
+---
+
+# Load MS Data
+
+Load the processed MS1 and MS2 data from the preprocessing step:
+
+```{r}
+library(xcms)
+library(MsIO)
+library(MsExperiment)
+
+# Source setup.R for helper functions
+source(file.path("1_preprocessing", "setup.R"))
+
+# Load peak evidence table from automatic annotation
+peak <- read.csv(
+  file.path(
+    "2_annotation_auto",
+    lab,
+    study_group,
+    "peak_evidence.csv"
+  )
+)
+table(peak$mixture)
+```
+
+## Load MS1 Data
+
+Load MS1-level data (Alabaster format):
+
+```{r}
+mse <- readMsObject(
+  XcmsExperiment(),
+  AlabasterParam(path = file.path(study_path, "mse")),
+  spectraPath = file.path(study_path, "mzml")
+)
+
+# Extract mixture information from sample names
+sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
+meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
+
+# Normalize mixture column
+sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
+meta$Mixture <- gsub("\\.", "_", meta$Mixture)
+```
+
+## Load MS2 Data
+
+Load MS2-level data (two injections):
+
+```{r}
+mse2 <- readMsObject(
+  XcmsExperiment(),
+  AlabasterParam(path = file.path(study_path, "mse2")),
+  spectraPath = file.path(study_path, "mzml")
+)
+
+# Extract and normalize mixture information
+sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
+sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
+```
+
+# Generate Library
+
+## Filter by MS2 Count
+
+Filter for compounds that have positive MS2 counts:
+
+```{r}
+fin_ms2 <- res_true[res_true$ms2_count > 0, ]
+cpds <- fin_ms2$chrom_peak_id
+
+cat(sprintf("Compounds with MS2 data: %d\n", nrow(fin_ms2)))
+```
+
+## Extract MS2 Spectra
+
+**NOTE:** Different labs use different methods to extract MS2 spectra.
+Choose the appropriate method below based on your data:
+
+### Option A: Two Injections with `automate_matching_ms2()` (AFEKTA, CEMBIO, ICL)
+
+```{r}
+# This method is used for labs with two separate injections
+test <- automate_matching_ms2(
+  mse2 = mse2,
+  match_res = fin_ms2,
+  waters_data = FALSE  # Set to TRUE for Waters data (e.g., ICL)
+)
+```
+
+### Option B: Single Injection with `chromPeakSpectra()` (HMGU)
+
+```{r}
+# This method is used for labs with single injection
+# Uncomment to use:
+# test <- chromPeakSpectra(
+#   mse,
+#   msLevel = 2L,
+#   peaks = cpds,
+#   expandRt = 5,
+#   expandMz = 0.005
+# )
+```
+
+## Prepare Final Library Table
+
+```{r}
+# Select columns - note: afekta includes "target_formula"
+base_cols <- c(
+  "mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
+  "target_ChEBI.name", "target_ChEBI", "target_InChIKey",
+  "adduct", "polarity", "ms2_true_count", "RTI", "mixture"
+)
+
+# Check if target_formula is present and add it if so
+if ("target_formula" %in% colnames(res_true)) {
+  base_cols <- c(base_cols[1:9], "target_formula", base_cols[10:length(base_cols)])
+}
+
+fin <- res_true[, base_cols]
+fin$ms2_true_count <- as.logical(fin$ms2_true_count)
+
+# Standardize column names
+standard_cols <- c(
+  "mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
+  "compound_name", "ChEBI", "InChIKey"
+)
+
+if ("target_formula" %in% colnames(fin)) {
+  standard_cols <- c(standard_cols, "formula")
+}
+
+standard_cols <- c(
+  standard_cols,
+  "adduct", "polarity", "matched_to_library", "RTI", "mixture"
+)
+
+colnames(fin) <- standard_cols
+
+head(fin)
+```
+
+## Export Library CSV
+
+```{r}
+# Export the library table to output_path
+csv_file <- file.path(output_path, paste0("ring_trial_library_", study_group, ".csv"))
+write.csv(fin, csv_file, row.names = FALSE)
+
+cat(sprintf("Library table exported to: %s\n", csv_file))
+```
+
+---
+
+# Exporting MS2 Data
+
+## Quick Visualization (Optional)
+
+```{r}
+# Example: view the second compound
+# spec1 <- split(test, test$chrom_peak_id)[[2]]
+# plotSpectra(spec1)
+```
+
+### Notes on MS2 Data
+- The MS2 spectra are **not combined or cleaned** in this template
+- Labs may want to apply their own processing (combining injections, filtering by quality metrics, etc.)
+- The code below shows how to export the raw spectra to standard formats
+
+## Prepare Peak Data for Export
+
+```{r}
+# Add compound metadata to spectra
+peak_cols <- c(
+  "compound_name", "ChEBI", "InChIKey", "adduct",
+  "matched_to_library", "RTI", "mixture"
+)
+
+# Include formula if present
+if ("formula" %in% colnames(fin)) {
+  peak_cols <- c(peak_cols, "formula")
+}
+
+peakdata <- fin[test$chrom_peak_id, peak_cols]
+
+test <- cbind2(test, peakdata)
+test <- dropNaSpectraVariables(test)
+
+cat(sprintf("Prepared %d spectra for export\n", length(test)))
+```
+
+---
+
+## MGF Export
+
+```{r}
+library(MsBackendMgf)
+
+mgf_file <- file.path(output_path, paste0("std_spectra_", study_group, ".mgf"))
+
+# For simple export (without custom mapping)
+export(test@backend, MsBackendMgf(), file = mgf_file)
+
+cat(sprintf("MGF exported to: %s\n", mgf_file))
+```
+
+### MGF Export with Custom Mapping (Optional)
+
+```{r}
+# If you want to customize field names, use this approach:
+#
+# mgf_exp <- selectSpectraVariables(
+#   test,
+#   c(
+#     "spectrumId", "msLevel", "rtime",
+#     "dataOrigin", "precursorMz",
+#     "precursorIntensity", "precursorCharge",
+#     "collisionEnergy", "precursorPurity",
+#     "chrom_peak_id", "scanIndex", peak_cols
+#   )
+# )
+#
+# map <- spectraVariableMapping(MsBackendMgf())
+# map <- c(spectrumId = "TITLE", adduct = "ADDUCT", map)
+#
+# mgf_file <- file.path(output_path, paste0("std_spectra_", study_group, ".mgf"))
+# export(mgf_exp, MsBackendMgf(), file = mgf_file, mapping = map)
+```
+
+---
+
+## MSP Export (Optional)
+
+```{r}
+# Uncomment to enable MSP export
+#
+# library(MsBackendMsp)
+#
+# msp_file <- file.path(output_path, paste0("std_spectra_", study_group, ".msp"))
+#
+# msp_exp <- selectSpectraVariables(
+#   test,
+#   c(
+#     "spectrumId", "msLevel", "rtime",
+#     "dataOrigin", "precursorMz",
+#     "precursorIntensity", "precursorCharge",
+#     "collisionEnergy", "precursorPurity",
+#     "chrom_peak_id", "scanIndex", peak_cols
+#   )
+# )
+#
+# map <- spectraVariableMapping(MsBackendMsp())
+# map <- c(InChIKey = "INCHIKEY", compound_name = "NAME", map)
+#
+# export(msp_exp, MsBackendMsp(), file = msp_file, mapping = map)
+#
+# cat(sprintf("MSP exported to: %s\n", msp_file))
+```
+
+---
+
+# Advanced MS2 Processing (Optional)
+
+The following sections show optional processing steps that labs may apply to filter or clean MS2 spectra.
+
+## Combining Fragment Peaks (Optional)
+
+Reduce the number of fragment peaks by grouping nearby peaks:
+
+```{r}
+# Uncomment to use:
+# spec_combined <- combinePeaks(
+#   test,
+#   tolerance = 0.1,  # Adjust based on your instrument
+#   ppm = 0.0,
+#   intensityFun = max,
+#   mzFun = mean
+# )
+```
+
+## Filtering by Precursor Purity (Optional)
+
+Calculate and filter based on precursor purity from MS1 data:
+
+```{r}
+# Uncomment to use:
+# pp <- precursorPurity(spectra(mse2), tolerance = 0.05, ppm = 0)
+# spectra(mse2)$precursorPurity <- pp
+#
+# # Re-extract MS2 spectra
+# test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2,
+#                               waters_data = FALSE)
+#
+# # Filter for high purity spectra
+# test_filtered <- test[test$precursorPurity > 0.9]
+```
+
+## Filtering by Fragment Count (Optional)
+
+Keep only spectra with a minimum number of fragments:
+
+```{r}
+# Uncomment to use:
+# test_filtered <- test[lengths(test) >= 5]
+```
+
+---
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

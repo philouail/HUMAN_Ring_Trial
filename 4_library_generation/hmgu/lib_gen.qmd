@@ -1,5 +1,5 @@
 ---
-title: "library_generation"
+title: "library_generation_HE_hmgu"
 format: html
 ---
 
@@ -11,29 +11,35 @@ ring trial experiment of the HUMAN_DN.
 - A table for MS1 annotation
 - A mgf (or msp) file for MS2 level annotation.
 
+
 Load results table curated by the labs:
 
 ```{r}
 study_group <- "HE" #example HE / FE / Others
-lab <- "cembio" # example: afekta / cembio / icl
+lab <- "hmgu" # example: afekta / cembio / icl
 library(readxl)
 library(openxlsx)
-res_table <- read.xlsx(file.path("3_annotation_manual", study_group,
-"1_manual_curation", "fixed_lab_report", paste0("fixed_annotation_", lab,
-".xlsx")))
+res_table <- read.xlsx(file.path(
+  "3_annotation_manual",
+  study_group,
+  "1_manual_curation",
+  "fixed_lab_report",
+  paste0("fixed_annotation_", lab, ".xlsx")
+))
 ```
 
 ms2 data:
 
 ```{r}
-library(xcms)
+ibrary(xcms)
 library(MsIO)
 library(MsExperiment)
 
 source(file.path("1_preprocessing", "setup.R"))
 peak <- read.csv(file.path(
   "2_annotation_auto",
-  lab, study_group,
+  lab,
+  study_group,
   "peak_evidence.csv"
 ))
 table(peak$mixture)
@@ -41,25 +47,17 @@ study_path <- file.path("1_preprocessing", lab, study_group)
 mse <- readMsObject(
   XcmsExperiment(),
   AlabasterParam(path = file.path(study_path, "mse")),
-  spectraPath = file.path(study_path, "mzml"))
+  spectraPath = file.path(study_path, "mzml")
+)
 
 sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
 meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
 
 sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
 meta$Mixture <- gsub("\\.", "_", meta$Mixture)
-
-mse2 <- readMsObject(
-  XcmsExperiment(),
-  AlabasterParam(path = file.path(study_path, "mse2")),
-  spectraPath = file.path(study_path, "mzml")
-)
-sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
-sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
 ```
 
 # Generate library:
-
 Next: filter for the one that have "ms2_count" column positive.
 
 ```{r}
@@ -68,13 +66,15 @@ fin_ms2 <- fin[fin$ms2_count > 0, ]
 cpds <- fin_ms2$chrom_peak_id
 ```
 
-
-2 injections:
+1 injections: easy
 
 ```{r}
-test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2,
-                              waters_data = FALSE)
+test <- chromPeakSpectra(mse, msLevel = 2L, peaks = cpds, expandRt = 5,
+  expandMz = 0.005)
+```
 
+
+```{r}
 fin <- fin[, c("mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
                "target_ChEBI.name", "target_ChEBI", "target_InChIKey",
                "adduct", "polarity", "ms2_true_count", "RTI", "mixture")]
@@ -91,12 +91,6 @@ write.csv(fin, "ring_trial_library_HE.csv") ## This is moved to results/HE
 
 # Generate mgf file
 
-```{r, eval= FALSE}
-# Example
-spec1 <- split(test, test$chrom_peak_id)[[2]]
-plotSpectra(spec1)
-```
-
 - This is not combined nor cleaned.
 - I did not get any feedback from the labs regarding this.
 - Could be done by the lab themselves.
@@ -104,7 +98,7 @@ plotSpectra(spec1)
 ```{r}
 peakdata <- fin[test$chrom_peak_id, -c(1:6, 11)]
 
-test<- cbind2(test, peakdata)
+test <- cbind2(test, peakdata)
 test <- dropNaSpectraVariables(test)
 
 library(MsBackendMgf)

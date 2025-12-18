@@ -3,11 +3,14 @@ library(readxl)
 library(openxlsx)
 
 # 1. Setup paths
-lab_data_folder <- "post_manual_curation"
+base_path <- file.path(
+  "3_annotation_manual",
+  "HE"
+)
 
 # 2. Read and Combine Data
 all_labs_data <- list.files(
-  path = lab_data_folder,
+  path = file.path(base_path, "1_manual_curation", "fixed_lab_report"),
   pattern = "\\.xlsx$",
   full.names = TRUE
 ) %>%
@@ -16,13 +19,17 @@ all_labs_data <- list.files(
   mutate(
     lab_id = lab_file %>%
       str_remove("\\.xlsx$") %>% # Remove extension
-      str_remove("^peak_evidence_rt_grouped_manual_fixed_") # Remove prefix
+      str_remove("^fixed_annotation") # Remove prefix
   )
 
 ## Export table of all annotations (raw combined)
 write.xlsx(
   all_labs_data,
-  file = "combine_annotation/all_lab_annotations.xlsx"
+  file = file.path(
+    base_path,
+    "2_combine_annotation",
+    "all_lab_annotations.xlsx"
+  )
 )
 
 df <- all_labs_data
@@ -115,11 +122,19 @@ print(head(consensus_table))
 
 write.xlsx(
   consensus_table,
-  file = "combine_annotation/consensus_summary.xlsx"
+  file = file.path(
+    base_path,
+    "2_combine_annotation",
+    "consensus_lab_annotations.xlsx"
+  )
 )
 
+###############################################################################
+# Next Steps:
+###############################################################################
+
 ## Some labs need to chekc this in their raw data.
-## and update the manual curation sheet (peak_evidence_rt_grouped.xlsx) and
+## and update the manual curation sheet ("3_annotation_manual/HE/lab_report/*.xlsx") and
 ## remove peak id that are not valid.
 ## how can they add new ones, they cannot add peak ids, make a new sheet ?
 ## i  think that's the easiest.

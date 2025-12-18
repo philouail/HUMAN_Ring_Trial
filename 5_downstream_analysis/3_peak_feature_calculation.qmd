@@ -1,0 +1,348 @@
+---
+title: "Peak Feature Calculation"
+format: html
+execute:
+  dir: project
+---
+
+### TODO
+
+- Introduce statistical test for the differences observed.
+- introduce the setups used by each lab and relate to the observed differences.
+
+# Introduction
+
+This document performs peak feature calculation and analysis on the extracted
+ion chromatograms (EICs). The analysis includes:
+
+1. EIC extraction and preprocessing (baseline correction, smoothing, peak isolation)
+2. Peak feature calculation (metrics like FWHM, entropy, tailing factor, etc.)
+3. Inter-lab comparison of peak features
+4. Retention time stability analysis
+5. Quantitative robustness assessment
+6. PCA on peak features
+
+## Load libraries
+
+```{r library, include=TRUE, warning=FALSE, message=FALSE}
+library(Chromatograms)
+library(Spectra)
+library(xcms)
+library(MsIO)
+library(MsExperiment)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+source("rt_analysis_function.R")
+```
+
+# Load Data
+
+Load the TIC full spectra and annotation data:
+
+```{r load-tic-full-spectra}
+load("object/tic_full_spectra.RData")
+```
+
+```{r load-annotations}
+study_group <- "HE"
+res_afekta <- read.csv(file.path("..", "4_library_generation", "afekta",
+                                 study_group, "ring_trial_library_HE.csv"))
+res_hmgu <- read.csv(file.path("..", "4_library_generation", "hmgu",
+                               study_group, "ring_trial_library_HE.csv"))
+res_icl <- read.csv(file.path("..", "4_library_generation", "icl",
+                               study_group, "ring_trial_library_HE.csv"))
+res_cembio <- read.csv(file.path("..", "4_library_generation", "cembio",
+                                 study_group, "ring_trial_library_HE.csv"))
+```
+
+# Prepare Peak Table
+
+Create a peak table from the annotations with padding for EIC extraction:
+
+```{r peak-table}
+res_afekta$lab <- "afekta"
+res_hmgu$lab <- "hmgu"
+res_icl$lab <- "icl"
+res_cembio$lab <- "cembio"
+
+peak_table <- rbind(res_hmgu, res_afekta, res_icl, res_cembio)
+
+colnames(peak_table)[1] <- "chrom_peak_id"
+colnames(peak_table)[4:7] <- c("mzMin", "mzMax", "rtMin", "rtMax")
+peak_table$mzMin <- peak_table$mzMin - 0.003
+peak_table$mzMax <- peak_table$mzMax + 0.003
+peak_table$rtMin <- peak_table$rtMin - 3
+peak_table$rtMax <- peak_table$rtMax + 3
+peak_table$polarity <- ifelse(peak_table$polarity == "pos", 1, 0)
+```
+
+Summary of peak table:
+
+```{r peak-summary}
+## number of peak per lab
+table(peak_table$lab)
+
+## number of compound per lab
+split(peak_table$compound_name, peak_table$lab) |>
+  lapply(unique) |>
+  lapply(length)
+```
+
+# Extract EICs
+
+Extract ion chromatograms for detected peaks:
+
+```{r load-eics-detected, warning = FALSE}
+load("object/eics_detected.RData")
+```
+
+Summary of EIC lengths:
+
+```{r peak-lengths}
+split(lengths(eics), eics$lab) |>
+  lapply(summary)
+```
+
+# Clean EICs
+
+Apply baseline correction, smoothing, and peak isolation:
+
+```{r clean-eics}
+baseline <- BaselineParam(lambda = 200, p = 0.005)
+smooth_params <- SavitzkyGolayParam(window = 9, polynomial = 2)
+isolate_params <- IsolatePeakParam(frac = 0.05, tail_point = 1)
+
+final_eics <- eics |>
+  processEICs(param = baseline) |>
+  processEICs(param = smooth_params) |>
+  processEICs(param = isolate_params)
+
+## get rid of empty eics (from isolation or bad extraction)
+idx_na <- which(sapply(intensity(final_eics), function(i) all(is.na(i))) |
+                  lengths(intensity(final_eics)) < 3)
+
+if (length(idx_na) > 0) {
+  print(paste("Removing", length(idx_na), "EICs with all NA intensities or too short"))
+  final_eics <- final_eics[-idx_na]
+}
+```
+
+# Calculate Peak Metrics
+
+```{r calculate-metrics}
+# Calculate metrics using custom function
+metrics <- calculatePeakMetrics(peaksData(final_eics))
+
+# Merge metrics with EIC metadata (lab, mixture, compound)
+eic_data <- as.data.frame(chromData(final_eics))
+full_peak_report <- cbind(eic_data, metrics)
+
+# Filter out low-intensity peaks
+idx_low_int <- which(full_peak_report$apex_intensity < 500)
+if (length(idx_low_int) > 0) {
+  warning(paste("Removing", length(idx_low_int), "peaks with apex intensity < 500"))
+  full_peak_report <- full_peak_report[-idx_low_int, ]
+}
+
+head(full_peak_report)
+```
+
+Save the peak report for later use:
+
+```{r save-peak-report}
+save(full_peak_report, file = "object/full_peak_report.RData")
+```
+
+# Peak Feature Summary by Lab
+
+Explore peak metrics across labs to understand differences in chromatographic
+and MS performance.
+
+## Entropy
+
+Entropy is a measure of peak complexity or "purity".
+
+- Low entropy: "pure," sharp, simple peak shape (signal highly concentrated)
+- High entropy: "messy" peak that is broad, noisy, or has tailing/fronting
+
+```{r entropy-summary}
+split(full_peak_report$entropy, full_peak_report$lab) |>
+  lapply(summary)
+```
+
+## FWHM (Full Width at Half Maximum)
+
+FWHM is the classic measure of peak width.
+
+- Low FWHM: sharp, narrow peaks (high chromatographic efficiency)
+- High FWHM: broad peaks (poorer resolution, more co-elution)
+
+```{r fwhm-summary}
+split(full_peak_report$fwhm, full_peak_report$lab) |>
+  lapply(summary)
+```
+
+## Gaussian Similarity
+
+Measures how well the peak fits a Gaussian shape (R²).
+
+- High R²: ideal Gaussian peak shape
+- Low R²: deviations from ideal shape (tailing, fronting, etc.)
+
+```{r gaussian-summary}
+split(full_peak_report$gaussian_similarity, full_peak_report$lab) |>
+  lapply(summary)
+```
+
+## Tailing Factor
+
+Tailing Factor measures peak symmetry.
+
+- Close to 1: symmetric peak (ideal)
+- Greater than 1: peak tailing (undesirable)
+- Less than 1: peak fronting (undesirable)
+
+```{r tailing-summary}
+split(full_peak_report$tailing_factor, full_peak_report$lab) |>
+  lapply(summary)
+```
+
+# Downstream Peak Feature Analysis
+
+## 1. Retention Time (RT) Stability
+
+Calculate the mean, SD, and CV of retention time for each compound across labs.
+
+- Low CV: good chromatographic stability and inter-lab agreement
+- High CV: significant RT shifts, compound sensitive to LC setup differences
+
+```{r rt-stability}
+rt_report <- full_peak_report |>
+  group_by(compound_name, mixture) |>
+  summarize(
+    mean_rt = mean(rt_apex, na.rm = TRUE),
+    sd_rt = sd(rt_apex, na.rm = TRUE),
+    cv_rt = sd_rt / mean_rt,
+    n_detect = n(),
+    .groups = "drop"
+  ) |>
+  arrange(desc(cv_rt))
+
+print("Retention Time Stability Report (Top 10 most variable):")
+head(rt_report, 10)
+
+# Plot the distribution of RT CVs
+ggplot(rt_report, aes(x = cv_rt)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.8) +
+  labs(
+    title = "Distribution of Retention Time CVs",
+    x = "CV of RT (per compound)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+## 2. EIC Intensity Consistency (Quantitative Robustness)
+
+Since the LC setup is harmonized and the same standard mixture is used,
+differences in measured peak area/height are due to variations in MS
+(ionization efficiency, instrument tuning, mass accuracy/resolution, MS type).
+
+- Low CV: good quantitative agreement across labs
+- High CV: large differences in MS sensitivity for that compound
+
+```{r intensity-consistency}
+intensity_report <- full_peak_report |>
+  group_by(compound_name, mixture) |>
+  summarize(
+    mean_auc = mean(auc, na.rm = TRUE),
+    sd_auc = sd(auc, na.rm = TRUE),
+    cv_auc = sd_auc / mean_auc,
+    mean_height = mean(apex_intensity, na.rm = TRUE),
+    sd_height = sd(apex_intensity, na.rm = TRUE),
+    cv_height = sd_height / mean_height,
+    n_detect = n(),
+    .groups = "drop"
+  ) |>
+  arrange(desc(cv_auc))
+
+print("Quantitative Robustness Report (Top 10 most variable by Area):")
+head(intensity_report, 10)
+
+# Plot the distribution of Area CVs
+ggplot(intensity_report, aes(x = cv_auc)) +
+  geom_histogram(bins = 30, fill = "darkred", alpha = 0.8) +
+  labs(
+    title = "Distribution of Peak Area (AUC) CVs",
+    x = "CV of AUC (per compound)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+## 3. Principal Component Analysis (PCA) on Peak Features
+
+Cluster all detected peaks based on their shape and intensity features.
+
+- Strong clustering by Lab: MS setup is dominant factor driving peak quality
+- Clustering by Compound: labs relatively consistent, differences driven by
+  chemical properties
+- No clear clustering: high variability, no single factor dominates
+
+```{r pca-analysis, eval = TRUE}
+# Prepare the data for PCA
+pca_data <- full_peak_report |>
+  select(rt_apex, apex_intensity, fwhm, rt_width, auc, entropy) |>
+  na.omit()
+
+# Get idx of the rows kept after na.omit to match metadata
+idx <- which(complete.cases(full_peak_report[, c("rt_apex", "apex_intensity",
+                                              "fwhm", "rt_width", "auc", "entropy")]))
+
+# Log-transform intensity/area to manage scale differences
+pca_data$apex_intensity <- log10(pca_data$apex_intensity)
+pca_data$auc <- log10(pca_data$auc)
+
+# Run PCA
+pca_res <- prcomp(pca_data, center = TRUE, scale. = TRUE)
+
+# Get the plotting data (scores)
+pca_scores <- as.data.frame(pca_res$x)
+
+# Add the metadata back
+pca_scores$lab <- full_peak_report$lab[idx]
+pca_scores$mixture <- full_peak_report$mixture[idx]
+pca_scores$compound_name <- full_peak_report$compound_name[idx]
+
+# Get variance explained
+pc_var <- summary(pca_res)$importance[2, ]
+
+# Plot PC1 vs PC2
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = lab, shape = mixture)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "PCA of Peak Features",
+    subtitle = "Do peaks cluster by lab, based on their shape and intensity?",
+    x = paste0("PC1 (", round(pc_var[1] * 100, 1), "% variance)"),
+    y = paste0("PC2 (", round(pc_var[2] * 100, 1), "% variance)"),
+    color = "Laboratory",
+    shape = "Mixture"
+  ) +
+  theme_minimal() +
+  stat_ellipse(aes(group = lab), level = 0.95, linetype = "dashed")
+```
+
+# Summary
+
+Peak feature analysis complete. Key metrics calculated:
+
+- Entropy (peak purity)
+- FWHM (peak width)
+- Gaussian similarity (peak shape quality)
+- Tailing factor (peak symmetry)
+- Retention time stability
+- Quantitative robustness (peak area/height CVs)
+
+Results saved to `object/full_peak_report.RData` for downstream analysis.
