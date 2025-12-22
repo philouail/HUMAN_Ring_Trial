@@ -7,7 +7,7 @@ the **HUMAN Doctoral Network's** main research efforts.
 
 The goal of this study is to understand the sources of variability between
 different LC-MS setups used in metabolomics. We compare multiple LC-MS methods
- across various participating laboratories (Afekta, Cembio, HMGU, ICL).
+across various participating laboratories (Afekta, Cembio, HMGU, ICL).
 
 **The Experimental Design:**
 
@@ -24,6 +24,10 @@ different LC-MS setups used in metabolomics. We compare multiple LC-MS methods
 
 The analysis is divided into **5 sequential steps**, each corresponding to a
 numbered folder in the repository.
+
+:information_source: For most steps, the directory for the analysis step
+contains a subfolder for each lab and within that, a folder per analyzed
+standard mixture.
 
 ```mermaid
 ---
@@ -56,7 +60,7 @@ graph LR
 
 ### 🔹 1. Preprocessing (`1_preprocessing/`)
 
-*Goal: Convert raw data into processed XCMS objects.*
+*Goal: Convert raw data into processed xcms objects.*
 
   * **Generic Files:**
       * `generic_preprocessing.qmd`: A template script for preprocessing.
@@ -64,11 +68,12 @@ graph LR
       * `standards.xlsx` & `NAPS_info.xlsx`: MetaSci library and NAPS peak
         details.
   * **Lab Folders:** Each lab (e.g., `afekta`, `cembio`, `icl`, `hmgu`) has
-    specific subfolders containing:
-      * `preprocessing_script.qmd`: The specific execution script.
+    its own folder for analysis files. These contain subdirectories for each
+    standard mixture set (e.g., `HE` for *human endosome*) with files:
+      * `preprocessing_script.qmd`: The lab-specific analysis file.
       * `seq_pos.xlsx`: Sequence files.
       * `naps.csv`: Results of NAPS detection.
-      * `mse` and `mse2` objects: XCMS preprocessed R objects.
+      * `mse` and `mse2` objects: *xcms* preprocessed R objects.
 
 ### 🔹 2. Automatic Annotation (`2_annotation_auto/`)
 
