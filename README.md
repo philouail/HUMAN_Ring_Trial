@@ -1,19 +1,33 @@
-# HUMAN_Ring_Trial
+# HUMAN Ring Trial
 
-This repository contains the analysis for the **Ring Trial study**, which is
-part of the HUMAN Doctoral Network's main research efforts.
+This repository contains the analysis for the **Ring Trial study**, part of
+the **HUMAN Doctoral Network's** main research efforts.
 
-## Study Overview
+## 📖 Study Overview
 
-The goal of the study is to better understand the sources of variability between
-different LC-MS setups used in metabolomics. Specifically, we compare multiple
-LC-MS methods across various laboratories:
+The goal of this study is to understand the sources of variability between
+different LC-MS setups used in metabolomics. We compare multiple LC-MS methods
+across various participating laboratories (Afekta, Cembio, HMGU, ICL).
 
-1.  **Lab-Specific Method**: Each participating lab analyzes mixtures using
-    their own standard, everyday LC-MS protocol.
-2.  **HUMAN Reference Method**: All labs also analyze the same mixtures using a
-    standardized method, with a common column and gradient.
+**The Experimental Design:**
 
+1.  **Lab-Specific Method:** Each lab analyzes mixtures using their standard,
+    everyday LC-MS protocol.
+2.  **HUMAN Reference Method:** All labs analyze the same mixtures using a
+    standardized method (common column and gradient).
+3.  **Samples:** A total of **83 mixtures** from the MetaSci metabolite
+    standard library are analyzed (Ground Truth is known).
+
+-----
+
+## 📂 Project Structure & Workflow
+
+The analysis is divided into **5 sequential steps**, each corresponding to a
+numbered folder in the repository.
+
+:information_source: For most steps, the directory for the analysis step
+contains a subfolder for each lab and within that, a folder per analyzed
+standard mixture.
 
 ```mermaid
 ---
@@ -21,120 +35,125 @@ config:
   look: handDrawn
 ---
 graph LR
-    subgraph **Preprocessing**
-        A[Raw .mzML Files & Metadata] --> B{Data Loading};
-        B --> C{Peak Picking <br> using xcms};
-        C --> D{Alignment <br> using NAPS};
-        D --> E[Processed XcmsExperiment Object];
+    subgraph "1. Preprocessing"
+        A[Raw Files] --> B{XCMS <br> Peak Picking};
+        B --> C{NAPS <br> Alignment};
     end
-    subgraph **Library Building**
-        E --> F{MS1 Matching <br> to Adducts};
-        F --> G{Isotope Pattern <br> Matching};
-        F --> H{MS2 Annotation <br> vs. GNPS};
-        G --> I{RT Grouping};
-        H --> I;
-        I --> J[Annotated Features Table];
+    subgraph "2. Auto Annotation"
+        C --> D{MS1 & Isotope <br> Matching};
+        D --> E{MS2 <br> GNPS Match};
     end
-    subgraph **Library Generation**
-        J --> K{"Manual Curation <br> (Select TRUE values)"};
-        K --> L{Filter by Lowest <br> PPM Error};
-        L --> M["Final MS1 Library <br> (ring_trial_library_*.csv)"];
-        L --> N["Final MS2 Library <br> (std_spectra_*.mgf)"];
+    subgraph "3. Manual Curation"
+        E --> F[Lab Reports];
+        F --> G{Consensus Data};
+        G --> H[Manual Curation];
     end
+    subgraph "4. Lib Generation"
+        H --> I[Final CSV Library];
+        H --> J[Final MGF Spectra];
+    end
+
     style A fill:#f9f,stroke:#333,stroke-width:2px
-    style E fill:#ccf,stroke:#333,stroke-width:2px
-    style J fill:#cfc,stroke:#333,stroke-width:2px
-    style M fill:#fcf,stroke:#333,stroke-width:2px
-    style N fill:#fcf,stroke:#333,stroke-width:2px
+    style C fill:#ccf,stroke:#333,stroke-width:2px
+    style H fill:#cfc,stroke:#333,stroke-width:2px
 ```
 
-### Experimental Design
+### 🔹 1. Preprocessing (`1_preprocessing/`)
 
--   A total of **83 mixtures** from the MetaSci metabolite standard library will
-    be analyzed by each lab.
--   Each mixture is measured **twice**:
-    -   Once using the **lab-specific method**
-    -   Once using the **HUMAN reference method**
+*Goal: Convert raw data into processed xcms objects.*
 
-Because the ground truth (i.e., the identity and number of metabolites) is
-known, we can: 
+  * **Generic Files:**
+      * `generic_preprocessing.qmd`: A template script for preprocessing.
+      * `setup.R`: Loads necessary packages and definitions.
+      * `standards.xlsx` & `NAPS_info.xlsx`: MetaSci library and NAPS peak
+        details.
+  * **Lab Folders:** Each lab (e.g., `afekta`, `cembio`, `icl`, `hmgu`) has
+    its own folder for analysis files. These contain subdirectories for each
+    standard mixture set (e.g., `HE` for *human endosome*) with files:
+      * `preprocessing_script.qmd`: The lab-specific analysis file.
+      * `seq_pos.xlsx`: Sequence files.
+      * `naps.csv`: Results of NAPS detection.
+      * `mse` and `mse2` objects: *xcms* preprocessed R objects.
 
-- Compare chromatographic methods **within** each lab 
-- Compare LC-MS setups **between** labs using the standardized method
+### 🔹 2. Automatic Annotation (`2_annotation_auto/`)
 
-## Project Structure
+*Goal: Generate initial evidence for metabolite identification.*
 
-The first phase focuses on **automating the library-building process** as much
-as possible.
+  * **Process:** Uses the preprocessed objects to match MS1 adducts, isotopes,
+  and MS2 spectra against libraries.
+  * **Key Output:** `peak_evidence.csv` and `peak_evidence_rt_grouped.csv`
+  (intermediate files used for the next step).
 
-### Preprocessing
+### 🔹 3. Manual Curation (`3_annotation_manual/`)
 
--   Each lab will have their own **preprocessing scripts**.
--   These scripts generate intermediate objects required for library
-    construction.
--   While preprocessing files are quite similar across labs, **they must be run
-    step by step**, as intermediate outputs will help determine necessary
-    parameters for the library.
-- The preprocessing will results with a save "mse" (and possible "mse2") 
-  which are the preprocessed XcmsExperiment objects. These are resued throughout 
-  the rest of the process described below. 
+*Goal: Refine automatic annotations through expert review.*
 
-### Library Building
+1.  **Manual Curation (`1_manual_curation`):**
+      * Contains `lab_report` files where labs reviewed the automatic data.
+      * `fixed_lab_report/`: Scripts to standardize and fix formatting errors
+        in manual reports.
+2.  **Combine Annotation (`2_combine_annotation`):**
+      * `compare_lab_sheet.R`: Merges the corrections.
+      * `consensus_summary.xlsx`: The merged annotations.
+3.  **Refinement Loop:**
+      * Labs check the consensus results and review flagged compounds.
+      * Labs manually integrate missing compounds.
+      * Another round of annotation combining is performed to generate a final
+        table for each lab and a final consensus table.
 
--   The **library-building scripts are shared and common** across all labs.
--   They take the preprocessed objects as input and produce:
-    -   **Two final CSV files**
-    -   **Several diagnostic plots** to support decision-making and resolve
-        ambiguities in metabolite identification.
+### 🔹 4. Library Generation (`4_library_generation/`)
 
-> ⚠️ **Note:** The intermediate outputs from the library-building scripts are
-> not intended for direct use or inspection. Only the **final CSVs and plots**
-> are relevant for library review and finalization.
+*Goal: Produce the final, clean spectral libraries.*
 
-- Library generation is in a `lig_gen_*.qmd` file will results in 2 files: 
-  - A `ring_trial_library_*.csv` file containing the generated library, 
-    with identified metabolites and their characteristics.
-  - A `std_spectra_*.mgf` file containing the MS/MS spectra of the identified 
-    metabolites in MGF format.
-      - This one is to be refined in some ways.
+  * **Input:** The consensus data from Step 3.
+  * **Script:** `lib_gen_HE.qmd` (run per lab).
+  * **Final Outputs:**
+      * `ring_trial_library_HE.csv`: The final library table.
+      * `std_spectra_HE.mgf`: The MS/MS spectra in MGF format.
 
-## Example and Generic Files
+### 🔹 5. Downstream Analysis (`5_downstream_analysis/`) 🚧 WIP
 
-To support users in adapting the pipeline to their own data, we provide:
+*Goal: Compare performance across laboratories.*
 
--   **Example lab folder**:
+  * `lab_comparison_HE.qmd`: The main analysis notebook comparing
+    chromatographic performance (peak width, tailing) and identification
+    success between labs.
+  * `rt_analysis_function.R`: Helper functions for the analysis.
 
-    -   `example_preprocessing.qmd`: Step-by-step explanation of the
-        preprocessing procedure.
-    -   `example_library_building.qmd`: Step-by-step explanation of the
-        library-building process.
+-----
 
-    These are designed for clarity and learning. And as an example to how each
-    lab analysis should be organised.
+## 🛠️ Usage
 
--   **Generic files**:
+To reproduce the analysis or adapt it to new data, follow the numerical order
+of the folders.
 
-    -   `generic_preprocessing.qmd`
-    -   `generic_library_building.qmd`
-    -   `setup.R`
+### For a New Analysis:
 
-    These are simplified versions that users can easily adapt to their own
-    datasets. They include the necessary logic but omit extensive inline
-    commentary and visualization.
+1.  **Setup:** Run `1_preprocessing/setup.R` to install dependencies and load
+    helper functions.
+2.  **Preprocessing:** Copy `1_preprocessing/generic_preprocessing.qmd` and
+    adapt it to your file paths.
+3.  **Annotation:** Run the `generic_automatic_annotation.qmd` located in
+    `2_annotation_auto/` to generate your evidence tables.
 
-## Results 
+### For the Ring Trial Reproduction:
 
-The downstream lab comparison will be generated in the `results` folder, which
-will contain:
+Data is organized by lab (`afekta`, `cembio`, `hmgu`, `icl`) and method (`HE`
+for Human Extract/Standardized). You must run the `.qmd` file within the
+specific lab subfolder to regenerate that specific part of the analysis.
 
-    - `lab_comparison.qmd`: A comprehensive comparison of results across all
-      participating labs.
-    - `figures/`: A directory containing all figures generated during the lab
-      comparison analysis.
-    - `rt_analysis_function.R`: A script containing functions used in the lab
-      comparison analysis.
-    - `objects/`: A directory for storing intermediate objects used in the lab
-      comparison analysis.
+> ⚠️ **Note on Intermediate Files:**
+> The pipeline generates several intermediate objects (e.g., inside
+`2_annotation_auto/.../peak_evidence.csv`). These are not final results. Always
+ refer to folder `4_library_generation` for the final libraries,
+ `5_downstream_analysis` for the comparative results, and the **final consensus table in Step 3**.
+
+-----
+
+## 📊 Comparison Logic
+
+The downstream analysis (`5_downstream_analysis`) performs the final assessment
+of the Ring Trial.
 
 ```mermaid
 ---
@@ -156,5 +175,3 @@ graph TD
     style M fill:#fcf,stroke:#333,stroke-width:2px
     style T fill:#ffc,stroke:#333,stroke-width:2px
 ```
-
-

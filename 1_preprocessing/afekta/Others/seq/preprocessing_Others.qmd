@@ -1,0 +1,392 @@
+---
+title: "generic_preprocessing"
+format: html
+editor: source
+---
+
+# Setup & Raw Data Investigation
+
+This document provides a *generic preprocessing pipeline* using the HMGU
+reference method for both positive and negative modes. and is set up for Human
+endosome.
+
+## Load Required Packages and functions
+
+```{r, message=FALSE, warning=FALSE}
+source("setup.R")
+
+study_group <- "Others" #example HE / FE / Others
+```
+
+In case one or more of the above libraries are not available (and hence fail to
+load), they can be installed with the R command `BiocManager::install()` (e.g.
+`BiocManager::install("alabaster.base")` to install the *alabaster.base* R
+package). Note that this requires the installation of the *BiocManager* R
+package (which can be installed with `install.packages("BiocManager")`).
+
+## Load metadata and raw file
+
+```{r load-lcms-data, warning=FALSE, message=FALSE}
+# Load pos data
+seq_pos <- read_xlsx(paste0("seq_", study_group, "/seq_pos.xlsx"), 
+                 col_names = TRUE) |> as.data.frame()
+seq_pos$polarity <- "pos"
+# load neg data
+seq_neg <- read_xlsx(paste0("seq_", study_group, "/seq_neg.xlsx"), 
+                 col_names = TRUE) |> as.data.frame()
+seq_neg$polarity <- "neg"
+seq <- rbind(seq_pos, seq_neg)
+
+seq$filename <- paste0(seq$`Data File`, ".mzML")
+mse <- readMsExperiment(paste0(study_group, "_mzml/", seq$filename), 
+                        seq)
+
+sampleData(mse)
+```
+
+Below we set up the parallel processing, which will allow to make the
+pre-processing MUCH more efficient. please adjust to the number of cores that
+your computer can handle (mine has 4 so I use 2 or 3 for data analysis)
+
+This number will then be the same as the one you input in the `chunkSize =`
+parameter in the preprocessing steps.
+
+```{r}
+cores_nb <- 10 # Adjust the number of cores based on your machine
+if (.Platform$OS.type == "unix") {
+    register(MulticoreParam(cores_nb))
+} else {
+    register(SnowParam(cores_nb))
+}
+```
+
+## Overview and Quality
+
+Split pos and neg for this part.
+
+```{r}
+mse_pos <- mse[sampleData(mse)$polarity == "pos"]
+mse_neg <- mse[sampleData(mse)$polarity == "neg"]
+
+col_sample_type <- brewer.pal(
+    n = max(3, length(unique(sampleData(mse_pos)$sample_type))), "Set2")
+names(col_sample_type)[seq_along(unique(sampleData(mse_pos)$sample_type))] <-
+    unique(sampleData(mse_pos)$sample_type)
+```
+
+Suggestion to extract the BPC of all samples and plot them, all in one. BPC
+
+```{r}
+#| fig-height: 8
+#| fig-width: 6
+bpc_pos <- chromatogram(mse_pos, aggregationFun = "max")
+bpc_neg <- chromatogram(mse_neg, aggregationFun = "max")
+
+xl <- range(unlist(lapply(bpc_pos, rtime)), unlist(lapply(bpc_neg, rtime)))
+yl <- max(unlist(lapply(bpc_pos, intensity)),
+          unlist(lapply(bpc_neg, intensity)), na.rm = TRUE)
+plot(3, 3, pch = NA, xlim = xl, ylim = c(-yl, yl), xlab = "rtime",
+     ylab = "intensity", main = "BPC")
+abline(h = 0)
+grid()
+
+for (i in seq_len(ncol(bpc_pos))) {
+    points(rtime(bpc_pos[, i]), intensity(bpc_pos[, i]), type = "l",
+           col = paste0(col_sample_type[bpc_pos$sample_type[i]], 80))
+}
+for (i in seq_len(ncol(bpc_neg))) {
+    points(rtime(bpc_neg[, i]), -intensity(bpc_neg[, i]), type = "l",
+           col = paste0(col_sample_type[bpc_neg$sample_type[i]], 80))
+}
+
+par(mfrow = c(2, 1))
+plot(bpc_pos, col = paste0(col_sample_type[bpc_pos$sample_type], 80))
+grid()
+legend("topright", col = col_sample_type, lwd = 1,
+       legend = names(col_sample_type))
+plot(bpc_neg, col = paste0(col_sample_type[bpc_neg$sample_type], 80))
+grid()
+```
+
+Observations: ... \[write any obs you have here\]
+
+RT ranges and spectra number per MS levels:
+
+```{r}
+#' Range
+range(rtime(mse_pos))
+range(rtime(mse_neg))
+
+#' Count the number of spectra with a specific MS level per file.
+print("Positive mode")
+spectra(mse_pos) |>
+    msLevel() |>
+    split(fromFile(mse_pos)) |>
+    lapply(table) |>
+    do.call(what = cbind)
+
+#' Count the number of spectra with a specific MS level per file.
+print("Negative mode")
+spectra(mse_neg) |>
+    msLevel() |>
+    split(fromFile(mse_neg)) |>
+    lapply(table) |>
+    do.call(what = cbind)
+```
+
+Obervations: ...
+
+!!! Below decide if want to filter retention time (method dependent), if yes run:
+- we should all have the same RT range for ref method. lab specific will decide 
+  their own thing. 
+  
+```{r}
+mse <- filterRt(mse, rt = c(18, 720)) ## based on discussion, for Ref method. 
+```
+
+# Estimate peak-picking parameters on ONE file.
+
+```{r}
+x_meta <-  split(meta, meta$Mixture)[[1]]
+idx_sample <- which(sampleData(mse)$sample_type == "sample")[1]
+x_mse <- mse[idx_sample]
+```
+
+## Extract theoretical EICs
+
+Using theoretical m/z for both main positive adducts and all along the
+retention time.
+
+```{r}
+#| code-fold: true
+#| code-summary: "Show the code"
+
+#' Calculate m/z from the exact mass
+theo_mz <- mass2mz(x_meta[, "M"], c("[M+H]+", "[M+Na]+")) |>
+    as.vector()
+#' Define the m/z range.
+theo_mzr <- cbind(mzmin = theo_mz - MsCoreUtils::ppm(theo_mz, 20),
+                  mzmax = theo_mz + MsCoreUtils::ppm(theo_mz, 20))
+#' Expand by a fixed tolerance.
+theo_mzr[, 1L] <- theo_mzr[, 1L] - 0.05 # increase if missing data points, decrease if too much noise.
+theo_mzr[, 2L] <- theo_mzr[, 2L] + 0.05
+eicsMH <- chromatogram(x_mse, mz = theo_mzr)
+
+#' would use the ID + adduct as file name.
+fData(eicsMH)$std_id <- paste0(rep(x_meta$ChEBI, 2), "-", 
+                               rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
+fData(eicsMH)$std_name <- paste0(rep(x_meta$`ChEBI name`, 2), "-", 
+                               rep(c("[M+H]+", "[M+Na]+"), each = nrow(x_meta)))
+rownames(eicsMH) <- fData(eicsMH)$std_id
+
+dr <- paste0("results/", study_group, "/eics_full_rt_slices/M_ions/")
+dir.create(dr, recursive = TRUE, showWarnings = FALSE)
+for (i in seq_along(eicsMH)) {
+    cmp <- fData(eicsMH)$std_id[i]
+    cmp <- gsub(":", "_", cmp)
+    png(paste0(dr, "EIC_", cmp, ".png"),
+        width = 12, height = 8, units = "cm", res = 600, pointsize = 4)
+    plot(eicsMH[i, ], main = fData(eicsMH)$std_name[i])
+    legend("topright",
+           legend = c(mzmin = format(fData(eicsMH)$mzmin[i], digits = 6),
+                      mzmax = format(fData(eicsMH)$mzmax[i], digits = 6)))
+    grid()
+    dev.off()
+}
+```
+
+We have `r length(theo_mz)` number of standard.
+
+## Peak picking param set up
+
+Look at the previously generated EICs to set up parameters. This should happen
+only once per lab.
+
+First quickly check a few peaks to look for peak-width:
+
+```{r}
+## !!! adjust to compounds you see interesting peaks, look for multiple !!!
+plot(eicsMH["CHEBI:17780-[M+H]+"], xlim = c(165, 175)) # how large is the peak ? 7 sec from 167 to 174 sec
+plot(eicsMH["CHEBI:18019-[M+H]+"], xlim = c(24, 32)) # how large is the peak ? 6 sec from 24 to 30 sec
+plot(eicsMH["CHEBI:15611-[M+H]+"], xlim = c(24, 30)) # how large is the peak ? 6 sec from 24 to 30
+```
+
+Set up a lower and upper boundary of peak-width based on your observation.
+
+```{r}
+pw <- c(5,15) ## define here based on the observations above
+```
+
+For ppm deviation:
+
+Choose a compound from above and adjust the
+
+```{r}
+mz <- mz(eicsMH["CHEBI:17780-[M+H]+"]) |> as.vector() ## choose compound here
+
+x_mse |>
+    filterMsLevel(1L) |>
+    filterRt(c(165, 175)) |>
+    filterMzRange(mz = c(221.084, 221.09)) |> # play around with this to determinate the best range
+    plot()
+
+cst <- x_mse |>
+    spectra() |>
+    filterMsLevel(msLevel = 1L) |>
+    filterRt(rt = c(165, 175)) |> # be restrictive 
+    filterMzRange(mz =  c(221.084, 221.09)) # set it up as above.
+
+#' Show the number of peaks per m/z filtered spectra
+lengths(cst) ### the output here should look a bit like "1 1 1 1 1 " 
+```
+
+```{r}
+#' Calculate the difference in m/z values between scans
+mz_diff <- cst |>
+    mz() |>
+    unlist() |>
+    diff() |>
+    abs()
+
+#' Express differences in ppm
+range(mz_diff * 1e6 / mean(unlist(mz(cst))))
+```
+
+Take a number a bit above the output from above. Also depends on the machine.
+We try not to go below 10ppm.
+
+```{r}
+ppmval <- 20 ## input your number here #Min 20ppm?
+```
+
+# Peak picking on ALL samples
+
+```{r}
+cwp <- CentWaveParam(peakwidth = pw,
+                     ppm = ppmval,
+                     integrate = 2,
+                     snthresh = 7, ## lower if your dataset is too noisy. 
+                     noise = 100)  ## increase depending on what you estimate you minimum intensity for real signal to be
+mse <- findChromPeaks(mse, cwp, 
+                          msLevel = 1L, chunkSize = cores_nb)
+
+mdpp <- MergeNeighboringPeaksParam(expandRt = max(pw)/2, 
+                                   expandMz = 0.0015,
+                                   minProp = 0.75)
+mse <- refineChromPeaks(mse, mdpp, chunkSize = cores_nb)
+
+chromPeakData(mse)$merged |>
+                         table() 
+```
+
+# Alignment using NAPS
+
+```{r naps-part1}
+#' loading info from NAPS 
+naps_info <- read_xlsx("NAPS_info.xlsx",
+                       .name_repair = "minimal") |>
+    as.data.frame()
+
+#' calculate m/z 
+naps_info$mz_pos <- mass2mz(naps_info$`exact mass`, adduct = "[M+H]+")[, 1]
+
+#' subset positive polarity
+naps_pos <- mse[sampleData(mse)[, "sample_type"] == "NAPS" &
+                sampleData(mse)[, "polarity"] == "pos"]
+
+#' Match chromatographic peaks against NAPS
+cpks <- chromPeaks(naps_pos)
+naps_pos_match <- matchValues(cpks, naps_info, mzColname = c("mz", "mz_pos"),
+                              MzParam(tolerance = 0, ppm = 10))
+naps_pos_match <- naps_pos_match[whichQuery(naps_pos_match)]
+md <- matchedData(naps_pos_match, c("mz", "rt", "maxo", "sample",
+                                    "ppm_error", "target_Name")) |>
+    as.data.frame()
+
+
+pos_rt_matrix <- naps_rt_matrix(md, naps_info)
+colnames(pos_rt_matrix) <- paste0("NAPS_POS_", 
+                                  seq_len(ncol(pos_rt_matrix)))
+```
+
+```{r naps-part2}
+#' Define m/z for the expected ions of the NAPS
+naps_info$mz_neg <- mass2mz(naps_info$`exact mass`, adduct = "[M+CHO2]-")[, 1]
+
+#' Negative polarity
+naps_neg <- mse[sampleData(mse)[, "sample_type"] == "NAPS" &
+                sampleData(mse)[, "polarity"] == "neg"]
+cpks <- chromPeaks(naps_neg)
+naps_neg_match <- matchValues(cpks, naps_info, mzColname = c("mz", "mz_neg"),
+                              MzParam(tolerance = 0, ppm = 10))
+naps_neg_match <- naps_neg_match[whichQuery(naps_neg_match)]
+md <- matchedData(naps_neg_match, c("mz", "rt", "maxo", "sample",
+                                    "ppm_error", "target_Name")) |>
+    as.data.frame()
+
+neg_rt_matrix <- naps_rt_matrix(md, naps_info)
+colnames(neg_rt_matrix) <- paste0("NAPS_NEG_", seq_len(ncol(neg_rt_matrix)))
+matchedData(naps_neg_match, c("rt", "maxo", "sample", "target_Name"))
+```
+
+```{r naps-combine}
+rt_matrix <- cbind(pos_rt_matrix, neg_rt_matrix)
+## export table 
+write.csv(
+    cbind(naps_info, rt_matrix),
+    file = file.path("results", study_group, "naps.csv"),
+    row.names = TRUE
+)
+```
+
+```{r rti-setup}
+idx <- which(sampleData(mse)$Sample.Name == "NAPS")
+idx_sample <- which(sampleData(mse)$sample_type == "sample")
+
+for (i in idx_sample) {
+    idx_naps_bef <- get_closest_index(i, idx, "previous")
+    sampleData(mse)[i, "NAPS_before"] <-
+        colnames(rt_matrix)[which(idx == idx_naps_bef)]
+    idx_naps_aft <- get_closest_index(i, idx, "next")
+    sampleData(mse)[i, "NAPS_after"] <-
+        colnames(rt_matrix)[which(idx == idx_naps_aft)]
+}
+```
+
+Alignment based on the table above
+
+```{r align}
+pgp <- PeakGroupsParam(
+    minFraction = 0.75,
+    extraPeaks = 50,
+    span = 0.5,
+    subset = which(sampleData(mse)$sample_type == "NAPS"),
+    subsetAdjust = "average",
+    peakGroupsMatrix = rt_matrix)
+mse <- adjustRtime(mse, param = pgp)
+
+
+plotAdjustedRtime(
+    mse, col = paste0(col_sample_type[sampleData(mse)$sample_type], 60))
+
+mse <- applyAdjustedRtime(mse)
+```
+
+## export object for library building
+
+```{r, export}
+## export object needed for library building
+mse <- mse[sampleData(mse)$sample_type == "sample"]
+
+if (length(unique(sampleData(mse)$ms_level)) > 1) {
+    mse2 <- mse[sampleData(mse)$ms_level == 2]
+    mse <- mse[sampleData(mse)$ms_level == 1]
+    saveMsObject(mse2,
+             AlabasterParam(path = file.path("results", study_group, "mse2")))
+    saveMsObject(mse,
+             AlabasterParam(path = file.path("results", study_group,"mse")))
+} else {
+    saveMsObject(mse,
+             AlabasterParam(path = file.path("results", study_group,"mse")))
+}
+```
