@@ -1,0 +1,417 @@
+---
+title: "CEMBIO Library Generation - Human Endosome (HE)"
+format: html
+---
+
+# Introduction
+
+This document generates compound annotation libraries from CEMBIO's ring trial data for the Human Endosome (HE) mixture.
+
+**Purpose:**
+- Generate a table for MS1 annotation
+- Generate MGF (or MSP) files for MS2 level annotation
+
+**Data Structure:**
+- MS1/MS2 processed data: `1_preprocessing/cembio/HE/`
+- Manual curation results: `3_annotation_manual/HE/`
+- Automatic annotation results: `2_annotation_auto/cembio/HE/`
+
+---
+
+# Setup
+
+Load the configuration and define paths:
+
+```{r setup}
+# Lab configuration
+study_group <- "HE"
+lab <- "cembio"
+
+# Derived paths (automatic)
+study_path <- file.path("1_preprocessing", lab, study_group)
+output_path <- file.path("4_library_generation", lab, study_group)
+
+# Check that paths exist
+if (!dir.exists(study_path)) {
+  stop(paste("Study path does not exist:", study_path))
+}
+
+# Create output directory if it doesn't exist
+if (!dir.exists(output_path)) {
+  dir.create(output_path, recursive = TRUE)
+}
+
+cat(sprintf("Study path: %s\n", study_path))
+cat(sprintf("Output path: %s\n", output_path))
+```
+
+---
+
+# Load Curated Results Table
+
+Load the results table that was manually curated by CEMBIO:
+
+```{r load-results}
+library(readxl)
+library(openxlsx)
+
+# Construct filename with lab-specific name
+res_table <- read.xlsx(
+  file.path(
+    "3_annotation_manual",
+    study_group,
+    "1_manual_curation",
+    "fixed_lab_report",
+    paste0("fixed_annotation_", lab, ".xlsx")
+  )
+)
+
+head(res_table)
+cat(sprintf("Loaded %d curated annotations\n", nrow(res_table)))
+```
+
+---
+
+# Load MS Data
+
+Load the processed MS1 and MS2 data from the preprocessing step:
+
+```{r load-libraries}
+library(xcms)
+library(MsIO)
+library(MsExperiment)
+
+# Source setup.R for helper functions
+source(file.path("1_preprocessing", "setup.R"))
+```
+
+```{r load-peak-evidence}
+# Load peak evidence table from automatic annotation
+peak <- read.csv(
+  file.path(
+    "2_annotation_auto",
+    lab,
+    study_group,
+    "peak_evidence.csv"
+  )
+)
+table(peak$mixture)
+```
+
+## Load MS1 Data
+
+Load MS1-level data (Alabaster format):
+
+```{r load-ms1}
+mse <- readMsObject(
+  XcmsExperiment(),
+  AlabasterParam(path = file.path(study_path, "mse")),
+  spectraPath = file.path(study_path, "mzml")
+)
+
+# Extract mixture information from sample names
+sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
+meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
+
+# Normalize mixture column
+sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
+meta$Mixture <- gsub("\\.", "_", meta$Mixture)
+
+cat(sprintf("Loaded MS1 data with %d samples\n", nrow(sampleData(mse))))
+```
+
+## Load MS2 Data
+
+Load MS2-level data (two injections):
+
+```{r load-ms2}
+mse2 <- readMsObject(
+  XcmsExperiment(),
+  AlabasterParam(path = file.path(study_path, "mse2")),
+  spectraPath = file.path(study_path, "mzml")
+)
+
+# Extract and normalize mixture information
+sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
+sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
+
+cat(sprintf("Loaded MS2 data with %d samples\n", nrow(sampleData(mse2))))
+```
+
+---
+
+# Generate Library
+
+## Filter by MS2 Count
+
+Filter for compounds that have positive MS2 counts:
+
+```{r filter-ms2}
+cpds <- unlist(strsplit(res_table$chrom_peak_id, split = "\\|"))
+fin <- peak[peak$chrom_peak_id %in% cpds, ]
+
+fin_ms2 <- fin[fin$ms2_count > 0, ]
+
+cat(sprintf("Total compounds: %d\n", nrow(fin)))
+cat(sprintf("Compounds with MS2 data: %d\n", nrow(fin_ms2)))
+```
+
+## Extract MS2 Spectra
+
+CEMBIO uses two separate injections for MS2 data:
+
+```{r extract-ms2}
+# Extract MS2 spectra using automate_matching_ms2
+test <- automate_matching_ms2(
+  mse2 = mse2,
+  match_res = fin_ms2,
+  waters_data = FALSE # Set to TRUE if using Waters data
+)
+
+## code below failing
+# test <- filterEmptySpectra(test)
+#backendBpparam(test) <- SerialParam()
+# pp <- precursorPurity(
+#  spectra(mse2),
+#  tolerance = 0.05,
+#  ppm = 0,
+#  useReportedIsolationWindow = FALSE,
+#  BPPARAM = SerialParam()
+#)
+# spectra(mse2)$precursorPurity <- pp
+
+cat(sprintf("Extracted %d MS2 spectra\n", length(test)))
+```
+
+## Prepare Final Library Table
+
+```{r prepare-library}
+# Select columns
+base_cols <- c(
+  "mz",
+  "rt",
+  "mzmin",
+  "mzmax",
+  "rtmin",
+  "rtmax",
+  "target_ChEBI.name",
+  "target_ChEBI",
+  "target_InChIKey",
+  "target_formula",
+  "adduct",
+  "polarity",
+  "ms2_true_count",
+  "RTI",
+  "mixture"
+)
+
+fin <- fin[, base_cols]
+fin$ms2_true_count <- as.logical(fin$ms2_true_count)
+
+# Standardize column names
+standard_cols <- c(
+  "mz",
+  "rt",
+  "mzmin",
+  "mzmax",
+  "rtmin",
+  "rtmax",
+  "compound_name",
+  "ChEBI",
+  "InChIKey",
+  "formula",
+  "adduct",
+  "polarity",
+  "matched_to_library",
+  "RTI",
+  "mixture"
+)
+
+colnames(fin) <- standard_cols
+
+head(fin)
+```
+
+## Export Library CSV
+
+```{r export-csv}
+# Export the library table to output_path
+csv_file <- file.path(output_path, paste0("ring_trial_library_", study_group, ".csv"))
+write.csv(fin, csv_file, row.names = FALSE)
+
+cat(sprintf("Library table exported to: %s\n", csv_file))
+```
+
+---
+
+# Exporting MS2 Data
+
+## Quick Visualization (Optional)
+
+```{r visualize-spectrum, eval=FALSE}
+# Example: view the second compound
+spec1 <- split(test, test$chrom_peak_id)[[2]]
+plotSpectra(spec1)
+```
+
+## Prepare Peak Data for Export
+
+```{r prepare-ms2-export}
+# Add compound metadata to spectra
+peak_cols <- c(
+  "compound_name", "ChEBI", "InChIKey", "adduct",
+  "matched_to_library", "RTI", "mixture", "formula"
+)
+
+peakdata <- fin[test$chrom_peak_id, peak_cols]
+
+test <- cbind2(test, peakdata)
+test <- dropNaSpectraVariables(test)
+
+cat(sprintf("Prepared %d spectra for export\n", length(test)))
+```
+
+---
+
+## MGF Export
+
+```{r export-mgf}
+library(MsBackendMgf)
+
+mgf_file <- file.path(output_path, paste0("std_spectra_", study_group, ".mgf"))
+
+# Export to MGF format
+export(test@backend, MsBackendMgf(), file = mgf_file)
+
+cat(sprintf("MGF exported to: %s\n", mgf_file))
+```
+
+### MGF Export with Custom Mapping (Optional)
+
+```{r export-mgf-custom, eval=FALSE}
+# If you want to customize field names, use this approach:
+
+mgf_exp <- selectSpectraVariables(
+  test,
+  c(
+    "spectrumId", "msLevel", "rtime",
+    "dataOrigin", "precursorMz",
+    "precursorIntensity", "precursorCharge",
+    "collisionEnergy", "precursorPurity",
+    "chrom_peak_id", "scanIndex", peak_cols
+  )
+)
+
+map <- spectraVariableMapping(MsBackendMgf())
+map <- c(spectrumId = "TITLE", adduct = "ADDUCT", map)
+
+mgf_file_custom <- file.path(output_path, paste0("std_spectra_",
+study_group, "_custom.mgf"))
+export(mgf_exp, MsBackendMgf(), file = mgf_file_custom, mapping = map)
+
+cat(sprintf("Custom MGF exported to: %s\n", mgf_file_custom))
+```
+
+---
+
+## MSP Export (Optional)
+
+```{r export-msp, eval=FALSE}
+library(MsBackendMsp)
+
+msp_file <- file.path(output_path, paste0("std_spectra_", study_group, ".msp"))
+
+msp_exp <- selectSpectraVariables(
+  test,
+  c(
+    "spectrumId", "msLevel", "rtime",
+    "dataOrigin", "precursorMz",
+    "precursorIntensity", "precursorCharge",
+    "collisionEnergy", "precursorPurity",
+    "chrom_peak_id", "scanIndex", peak_cols
+  )
+)
+
+map <- spectraVariableMapping(MsBackendMsp())
+map <- c(InChIKey = "INCHIKEY", compound_name = "NAME", map)
+
+export(msp_exp, MsBackendMsp(), file = msp_file, mapping = map)
+
+cat(sprintf("MSP exported to: %s\n", msp_file))
+```
+
+---
+
+# Advanced MS2 Processing (Optional)
+
+The following sections show optional processing steps that CEMBIO may apply to filter or clean MS2 spectra.
+
+## Combining Fragment Peaks (Optional)
+
+Reduce the number of fragment peaks by grouping nearby peaks:
+
+```{r combine-peaks, eval=FALSE}
+spec_combined <- combinePeaks(
+  test,
+  tolerance = 0.1,  # Adjust based on your instrument
+  ppm = 0.0,
+  intensityFun = max,
+  mzFun = mean
+)
+
+cat(sprintf("Combined spectra: %d\n", length(spec_combined)))
+```
+
+## Filtering by Precursor Purity (Optional)
+
+Calculate and filter based on precursor purity from MS1 data:
+
+```{r filter-purity, eval=FALSE}
+pp <- precursorPurity(spectra(mse2), tolerance = 0.05, ppm = 0)
+spectra(mse2)$precursorPurity <- pp
+
+# Re-extract MS2 spectra
+test <- automate_matching_ms2(mse2 = mse2, match_res = fin_ms2,
+                              waters_data = FALSE)
+
+# Filter for high purity spectra
+test_filtered <- test[test$precursorPurity > 0.9]
+
+cat(sprintf("High purity spectra: %d (out of %d)\n",
+            length(test_filtered), length(test)))
+```
+
+## Filtering by Fragment Count (Optional)
+
+Keep only spectra with a minimum number of fragments:
+
+```{r filter-fragments, eval=FALSE}
+min_fragments <- 5
+test_filtered <- test[lengths(test) >= min_fragments]
+
+cat(sprintf("Spectra with >=%d fragments: %d (out of %d)\n",
+            min_fragments, length(test_filtered), length(test)))
+```
+
+---
+
+# Summary
+
+```{r summary}
+cat("\n=== Library Generation Summary (CEMBIO - HE) ===\n")
+cat(sprintf("Total curated compounds: %d\n", nrow(res_table)))
+cat(sprintf("Compounds in peak evidence: %d\n", nrow(fin)))
+cat(sprintf("Compounds with MS2 data: %d\n", nrow(fin_ms2)))
+cat(sprintf("MS2 spectra extracted: %d\n", length(test)))
+cat(sprintf("\nOutput files:\n"))
+cat(sprintf("  - CSV: %s\n", basename(csv_file)))
+cat(sprintf("  - MGF: %s\n", basename(mgf_file)))
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

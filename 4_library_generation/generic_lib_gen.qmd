@@ -129,6 +129,9 @@ mse2 <- readMsObject(
 # Extract and normalize mixture information
 sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
 sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
+
+pp <- precursorPurity(spectra(mse2), tolerance = 0.05, ppm = 0)
+spectra(mse2)$precursorPurity <- pp
 ```
 
 # Generate Library
@@ -138,8 +141,10 @@ sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
 Filter for compounds that have positive MS2 counts:
 
 ```{r}
-fin_ms2 <- res_true[res_true$ms2_count > 0, ]
-cpds <- fin_ms2$chrom_peak_id
+cpds <- unlist(strsplit(res_table$chrom_peak_id, split = "\\|"))
+fin <- peak[peak$chrom_peak_id %in% cpds, ]
+
+fin_ms2 <- fin[fin$ms2_count > 0, ]
 
 cat(sprintf("Compounds with MS2 data: %d\n", nrow(fin_ms2)))
 ```
@@ -177,34 +182,45 @@ test <- automate_matching_ms2(
 ## Prepare Final Library Table
 
 ```{r}
-# Select columns - note: afekta includes "target_formula"
+# Select columns
 base_cols <- c(
-  "mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
-  "target_ChEBI.name", "target_ChEBI", "target_InChIKey",
-  "adduct", "polarity", "ms2_true_count", "RTI", "mixture"
+  "mz",
+  "rt",
+  "mzmin",
+  "mzmax",
+  "rtmin",
+  "rtmax",
+  "target_ChEBI.name",
+  "target_ChEBI",
+  "target_InChIKey",
+  "target_formula",
+  "adduct",
+  "polarity",
+  "ms2_true_count",
+  "RTI",
+  "mixture"
 )
 
-# Check if target_formula is present and add it if so
-if ("target_formula" %in% colnames(res_true)) {
-  base_cols <- c(base_cols[1:9], "target_formula", base_cols[10:length(base_cols)])
-}
-
-fin <- res_true[, base_cols]
+fin <- fin[, base_cols]
 fin$ms2_true_count <- as.logical(fin$ms2_true_count)
 
 # Standardize column names
 standard_cols <- c(
-  "mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
-  "compound_name", "ChEBI", "InChIKey"
-)
-
-if ("target_formula" %in% colnames(fin)) {
-  standard_cols <- c(standard_cols, "formula")
-}
-
-standard_cols <- c(
-  standard_cols,
-  "adduct", "polarity", "matched_to_library", "RTI", "mixture"
+  "mz",
+  "rt",
+  "mzmin",
+  "mzmax",
+  "rtmin",
+  "rtmax",
+  "compound_name",
+  "ChEBI",
+  "InChIKey",
+  "formula",
+  "adduct",
+  "polarity",
+  "matched_to_library",
+  "RTI",
+  "mixture"
 )
 
 colnames(fin) <- standard_cols
@@ -245,13 +261,8 @@ cat(sprintf("Library table exported to: %s\n", csv_file))
 # Add compound metadata to spectra
 peak_cols <- c(
   "compound_name", "ChEBI", "InChIKey", "adduct",
-  "matched_to_library", "RTI", "mixture"
+  "matched_to_library", "RTI", "mixture", "formula"
 )
-
-# Include formula if present
-if ("formula" %in% colnames(fin)) {
-  peak_cols <- c(peak_cols, "formula")
-}
 
 peakdata <- fin[test$chrom_peak_id, peak_cols]
 

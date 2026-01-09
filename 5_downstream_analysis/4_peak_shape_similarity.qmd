@@ -1,0 +1,179 @@
+---
+title: "Downstream Analysis: Adduct Grouping & Peak Shape Similarity"
+format: html
+editor: source
+toc: true
+---
+
+## 1. Setup and Data Loading
+
+We begin by loading the annotated peak data and the raw EICs. The goal is to establish methods to group peaks derived from the same compound (adducts, in-source fragments) using both scalar features and raw data shapes.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(data.table)
+library(xcms) # if needed for raw data handling
+library(corrr) # useful for correlations
+
+base_path <- file.path("5_downstream_analysis")
+
+# Load data
+# Ensure these objects are available in your environment
+# load(file = file.path(base_path, "object/full_peak_report.RData"))
+# load(file = file.path(base_path, "object/final_eics.RData"))
+
+# Convert to data.table for speed if datasets are large
+dt_peaks <- as.data.table(full_peak_report)
+```
+
+## 2. Peak Shape Similarity based on Features (Scalar Metrics)
+
+**Hypothesis:** Adducts of the same compound elute at the same time and share physical peak shape properties (FWHM, Tailing, Asymmetry) driven by the column interaction.
+
+### 2.1. Define Ground Truth (For Validation)
+
+Since we are developing the method on *annotated* data first, we define what a "correct group" looks like.
+
+```{r}
+# Create a unique ID for the "True Compound" in a specific sample
+dt_peaks[, true_group_id := paste(lab, mixture, compound_name, sep = "_")]
+
+# Check how many multi-adduct groups we actually have to work with
+group_counts <- dt_peaks[, .N, by = true_group_id][N > 1]
+print(paste("Number of ground truth groups with >1 peak:", nrow(group_counts)))
+
+```
+
+### 2.2. Pre-clustering by Retention Time (Hard Filter)
+
+Before checking shape, peaks must co-elute. We create a "Candidate Group" ID based on RT windows.
+
+```{r}
+# Function to assign initial groups based on RT tolerance (e.g., 5 seconds)
+assign_rt_groups <- function(data, rt_col = "rt_apex", tolerance = 5) {
+  data %>%
+    group_by(lab, mixture) %>%
+    arrange(.data[[rt_col]]) %>%
+    mutate(rt_diff = c(0, diff(.data[[rt_col]])),
+           # New group if gap > tolerance
+           is_new_group = rt_diff > tolerance,
+           rt_group_id = cumsum(is_new_group)) %>%
+    ungroup()
+}
+
+dt_peaks <- assign_rt_groups(dt_peaks, rt_col = "rt_apex", tolerance = 3) # Strict window
+
+```
+
+### 2.3. Testing Feature Similarity
+
+We iterate through specific metrics (`fwhm`, `tailing_factor`, `asymmetry`) to see which one best predicts membership in the same `true_group_id`.
+
+**Method:** Within each `rt_group_id`, we calculate the Coefficient of Variation (CV) for the metric. If the group consists of real adducts, the CV should be low.
+
+```{r}
+features_to_test <- c("fwhm", "tailing_factor", "gaussian_similarity", "rt_width")
+
+# Function to evaluate a single feature
+evaluate_feature <- function(data, feature_name) {
+  data %>%
+    filter(!is.na(.data[[feature_name]])) %>%
+    group_by(true_group_id) %>%
+    summarise(
+      n_peaks = n(),
+      # Calculate variability of the feature within the TRUE group
+      feature_cv = sd(.data[[feature_name]]) / mean(.data[[feature_name]]) * 100,
+      .groups = "drop"
+    ) %>%
+    filter(n_peaks > 1) %>%
+    summarise(
+      avg_cv = mean(feature_cv, na.rm = TRUE),
+      median_cv = median(feature_cv, na.rm = TRUE)
+    ) %>%
+    mutate(feature = feature_name)
+}
+
+# Run evaluation
+results_features <- map_dfr(features_to_test, ~evaluate_feature(dt_peaks, .x))
+print(results_features)
+
+```
+
+*Note: The feature with the lowest Median CV is the most robust predictor.*
+
+### 2.4. Combined Feature Model
+
+Once the best single features are identified, we combine them (e.g., using Euclidean distance on scaled variables) to cluster within the RT windows.
+
+```{r}
+# Conceptual code for clustering within RT groups
+# 1. Normalize features (scale)
+# 2. Calculate distance matrix
+# 3. Hierarchical clustering to split the RT group if shapes are distinct
+
+```
+
+## 3. Peak Shape Similarity based on Raw Data (EICs)
+
+**Hypothesis:** EICs of adducts are perfectly correlated (Pearson r \> 0.9) because they are slices of the same chromatographic band.
+
+### 3.1. Data Preparation (Interpolation)
+
+Raw data points are often not aligned on the exact same scan times. We must interpolate EICs in a candidate group to a common time axis.
+
+```{r}
+# Function to prepare EIC pairs for correlation
+# Input: List of EIC objects (time, intensity) belonging to one RT Group
+# Output: Correlation Matrix
+
+```
+
+### 3.2. Calculate Similarity (Pearson & Cosine)
+
+We perform this analysis per Lab/Mix to avoid hardware offsets.
+
+```{r}
+# Wrapper to apply correlation analysis
+calculate_eic_correlation <- function(eic_list) {
+  # 1. Identify common RT range
+  # 2. Bin/Interpolate intensities
+  # 3. cor(matrix, method = "pearson")
+}
+
+# Apply to a subset for testing (e.g., one specific lab/mix)
+# test_group <- dt_peaks[lab == "SpecificLab" & mixture == "Mix1" & rt_group_id == X]
+# eic_correlations <- calculate_eic_correlation(final_eics[test_group$chrom_peak_id])
+
+```
+
+### 3.3. Evaluation of Raw Data Similarity
+
+We check if `true_group_id` members have higher correlations than non-members within the same RT window.
+
+```{r}
+# Compare "Within-Group" correlation vs "Between-Group" correlation
+# Goal: Minimize overlap between these two distributions.
+
+```
+
+## 4. Cross-Lab Consistency (Downstream Application)
+
+We do *not* group peaks across labs based on shape (as shapes vary by hardware). Instead, we assess if the **grouping logic** holds across labs.
+
+-   **Question:** If Compound X has a "good" shape match with its adduct in Lab A, does it also have a "good" match in Lab B?
+-   **Metric:** Compare the `feature_cv` (Coefficient of Variation) for specific compounds across labs.
+
+```{r}
+# Example: Is FWHM variability for [M+H] vs [M+Na] consistent across labs?
+cross_lab_check <- dt_peaks %>%
+  group_by(lab, compound_name) %>%
+  summarise(
+    fwhm_cv = sd(fwhm)/mean(fwhm),
+    .groups = "drop"
+  )
+
+ggplot(cross_lab_check, aes(x = lab, y = fwhm_cv)) +
+  geom_boxplot() +
+  ggtitle("Consistency of Adduct FWHM Similarity Across Labs")
+
+```

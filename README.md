@@ -115,10 +115,7 @@ graph LR
 
 *Goal: Compare performance across laboratories.*
 
-  * `lab_comparison_HE.qmd`: The main analysis notebook comparing
-    chromatographic performance (peak width, tailing) and identification
-    success between labs.
-  * `rt_analysis_function.R`: Helper functions for the analysis.
+Will be updated soon when the analysis is complete.
 
 -----
 

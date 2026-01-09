@@ -33,8 +33,14 @@ library(MsExperiment)
 library(tidyr)
 library(dplyr)
 library(ggplot2)
+library(ggpubr)
+library(rstatix)
+library(stringr)
+library(janitor)
+library(pheatmap)
 
-source("rt_analysis_function.R")
+base_path <- file.path("5_downstream_analysis")
+source(file.path(base_path,"rt_analysis_function.R"))
 ```
 
 # Load Data
@@ -42,18 +48,19 @@ source("rt_analysis_function.R")
 Load the TIC full spectra and annotation data:
 
 ```{r load-tic-full-spectra}
-load("object/tic_full_spectra.RData")
+load(file.path(base_path, "object/tic_full_spectra.RData"))
 ```
+
 
 ```{r load-annotations}
 study_group <- "HE"
-res_afekta <- read.csv(file.path("..", "4_library_generation", "afekta",
+res_afekta <- read.csv(file.path("4_library_generation", "afekta",
                                  study_group, "ring_trial_library_HE.csv"))
-res_hmgu <- read.csv(file.path("..", "4_library_generation", "hmgu",
+res_hmgu <- read.csv(file.path("4_library_generation", "hmgu",
                                study_group, "ring_trial_library_HE.csv"))
-res_icl <- read.csv(file.path("..", "4_library_generation", "icl",
+res_icl <- read.csv(file.path("4_library_generation", "icl",
                                study_group, "ring_trial_library_HE.csv"))
-res_cembio <- read.csv(file.path("..", "4_library_generation", "cembio",
+res_cembio <- read.csv(file.path("4_library_generation", "cembio",
                                  study_group, "ring_trial_library_HE.csv"))
 ```
 
@@ -69,8 +76,7 @@ res_cembio$lab <- "cembio"
 
 peak_table <- rbind(res_hmgu, res_afekta, res_icl, res_cembio)
 
-colnames(peak_table)[1] <- "chrom_peak_id"
-colnames(peak_table)[4:7] <- c("mzMin", "mzMax", "rtMin", "rtMax")
+colnames(peak_table)[3:6] <- c("mzMin", "mzMax", "rtMin", "rtMax")
 peak_table$mzMin <- peak_table$mzMin - 0.003
 peak_table$mzMax <- peak_table$mzMax + 0.003
 peak_table$rtMin <- peak_table$rtMin - 3
@@ -95,7 +101,10 @@ split(peak_table$compound_name, peak_table$lab) |>
 Extract ion chromatograms for detected peaks:
 
 ```{r load-eics-detected, warning = FALSE}
-load("object/eics_detected.RData")
+load(file.path(base_path, "object/eics_detected.RData"))
+## impute.
+eics <- imputePeaksData(eics, method = "linear") ## this should be done already, remove when the whole thing is fixed.
+eics <- applyProcessing(eics)
 ```
 
 Summary of EIC lengths:
@@ -115,7 +124,7 @@ smooth_params <- SavitzkyGolayParam(window = 9, polynomial = 2)
 isolate_params <- IsolatePeakParam(frac = 0.05, tail_point = 1)
 
 final_eics <- eics |>
-  processEICs(param = baseline) |>
+  processEICs(param = baseline) |> ## there's a problem, the object should be imputed but is not. DEFINITELY need to recreate the objects.
   processEICs(param = smooth_params) |>
   processEICs(param = isolate_params)
 
@@ -152,8 +161,56 @@ head(full_peak_report)
 Save the peak report for later use:
 
 ```{r save-peak-report}
-save(full_peak_report, file = "object/full_peak_report.RData")
+save(full_peak_report, file = file.path(base_path, "object/full_peak_report.RData"))
+write.csv(full_peak_report, file = file.path(base_path, "object/full_peak_report.csv"), row.names = FALSE)
+save(final_eics, file = file.path(base_path, "object/final_eics.RData"))
 ```
+
+In this report, we analyze the calculated peak features across different labs and setups.
+and how they relate to hardware differences.
+
+## 2.2 Load and Clean Lab Setup Metadata
+
+We parse the lab_setup_phase1.csv to link differences to hardware.
+
+```{r load-metadata}
+# Read raw CSV
+lab_meta_raw <- read.csv(
+  file.path(base_path, "lab_setup_phase1.csv"),
+  header = FALSE,
+  stringsAsFactors = FALSE
+)
+
+# The CSV has a dual header structure. Row 2 contains the actual column names.
+colnames(lab_meta_raw) <- lab_meta_raw[2, ]
+lab_meta <- lab_meta_raw[-c(1, 2), ] %>%
+  clean_names() %>%
+  rename(lab_id = 1) %>% # Assuming first column is the Lab identifier
+  filter(lab_id != "") # Remove empty rows
+
+# Clean up specific columns for plotting
+lab_meta <- lab_meta %>%
+  mutate(
+    lc_instrument_clean = str_extract(lc_instrument, "^[A-Za-z]+"), # Extract Brand (Agilent, Waters, etc)
+    ms_instrument_clean = str_extract(ms_instrument, "^[A-Za-z]+"),
+    column_brand = str_extract(column, "^[A-Za-z]+")
+  )
+
+
+# subset for current method: hamornized (in column "details")
+lab_meta <- lab_meta %>%
+  filter(details == "harmonized")
+
+# Display the parsed setup
+head(lab_meta)
+
+
+full_peak_report_meta <- full_peak_report %>%
+  left_join(lab_meta, by = c("lab" = "lab_id")) #breaks here
+
+head(full_peak_report_meta)
+```
+
 
 # Peak Feature Summary by Lab
 
@@ -282,59 +339,123 @@ ggplot(intensity_report, aes(x = cv_auc)) +
   theme_minimal()
 ```
 
-## 3. Principal Component Analysis (PCA) on Peak Features
+## 3. Inter-Lab Statistical Comparison
 
-Cluster all detected peaks based on their shape and intensity features.
+We use the Kruskal-Wallis test (non-parametric ANOVA) to determine if peak features differ significantly between labs, followed by comparisons of distributions.
 
-- Strong clustering by Lab: MS setup is dominant factor driving peak quality
-- Clustering by Compound: labs relatively consistent, differences driven by
-  chemical properties
-- No clear clustering: high variability, no single factor dominates
+### 3.1 Peak Width (FWHM) Analysis
 
-```{r pca-analysis, eval = TRUE}
-# Prepare the data for PCA
-pca_data <- full_peak_report |>
-  select(rt_apex, apex_intensity, fwhm, rt_width, auc, entropy) |>
-  na.omit()
+Are the peaks significantly sharper in some labs?
 
-# Get idx of the rows kept after na.omit to match metadata
-idx <- which(complete.cases(full_peak_report[, c("rt_apex", "apex_intensity",
-                                              "fwhm", "rt_width", "auc", "entropy")]))
-
-# Log-transform intensity/area to manage scale differences
-pca_data$apex_intensity <- log10(pca_data$apex_intensity)
-pca_data$auc <- log10(pca_data$auc)
-
-# Run PCA
-pca_res <- prcomp(pca_data, center = TRUE, scale. = TRUE)
-
-# Get the plotting data (scores)
-pca_scores <- as.data.frame(pca_res$x)
-
-# Add the metadata back
-pca_scores$lab <- full_peak_report$lab[idx]
-pca_scores$mixture <- full_peak_report$mixture[idx]
-pca_scores$compound_name <- full_peak_report$compound_name[idx]
-
-# Get variance explained
-pc_var <- summary(pca_res)$importance[2, ]
-
-# Plot PC1 vs PC2
-ggplot(pca_scores, aes(x = PC1, y = PC2, color = lab, shape = mixture)) +
-  geom_point(alpha = 0.7, size = 2) +
-  labs(
-    title = "PCA of Peak Features",
-    subtitle = "Do peaks cluster by lab, based on their shape and intensity?",
-    x = paste0("PC1 (", round(pc_var[1] * 100, 1), "% variance)"),
-    y = paste0("PC2 (", round(pc_var[2] * 100, 1), "% variance)"),
-    color = "Laboratory",
-    shape = "Mixture"
-  ) +
+```{r fwhm-analysis}
+# 1. Visualization
+p1 <- ggviolin(full_peak_report_meta, x = "lab", y = "fwhm", fill = "lab",
+         add = "boxplot", add.params = list(fill = "white")) +
+  geom_hline(yintercept = median(full_peak_report_meta$fwhm), linetype = 2) +
+  labs(title = "Peak Width (FWHM) Distribution by Lab",
+       y = "FWHM (seconds)", x = "Laboratory") +
   theme_minimal() +
-  stat_ellipse(aes(group = lab), level = 0.95, linetype = "dashed")
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+print(p1)
+
+# 2. Statistical Test
+# Kruskal-Wallis test
+kw_res <- full_peak_report_meta %>% kruskal_test(fwhm ~ lab)
+print(kw_res)
+
+# 3. Effect Size (epsilon squared)
+# 0.01-0.06 (small), 0.06-0.14 (moderate), >= 0.14 (large)
+eff_res <- full_peak_report_meta %>% kruskal_effsize(fwhm ~ lab)
+print(eff_res)
 ```
 
-# Summary
+### 3.2 Tailing Factor Analysis
+
+Do certain labs produce more symmetrical peaks?
+
+```{r tailing-analysis}
+p2 <- ggviolin(full_peak_report_meta, x = "lab", y = "tailing_factor", fill = "lab",
+         add = "boxplot", add.params = list(fill = "white")) +
+  geom_hline(yintercept = 1.0, linetype = "dashed", color = "red") + # Ideal symmetry
+  labs(title = "Tailing Factor by Lab",
+       subtitle = "Closer to 1.0 is better",
+       y = "Tailing Factor", x = "Laboratory") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+print(p2)
+```
+
+## 4. Hardware Impact Analysis
+
+This section relates the observed differences to the setup metadata.
+
+### 4.1 Does LC Instrument Brand affect Peak Width?
+
+```{r lc-impact}
+# Filter out NAs in instrument data
+plot_data <- full_peak_report_meta %>%
+  filter(!is.na(lc_instrument_clean))
+
+ggplot(plot_data, aes(x = lc_instrument_clean, y = fwhm, fill = lc_instrument_clean)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Impact of LC Instrument on Peak Width",
+       x = "LC System Manufacturer",
+       y = "FWHM (s)") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+
+## 5. PCA of Peak Features
+
+We perform PCA to see if peaks cluster by Lab, Instrument, or Mixture.
+
+```{r pca-analysis}
+# Select numeric features for PCA
+pca_cols <- c("fwhm", "tailing_factor", "asymmetry", "entropy", "auc", "apex_intensity")
+pca_input <- full_peak_report_meta[, pca_cols]
+
+# Log transform area/intensity to handle dynamic range
+pca_input$auc <- log10(pca_input$auc + 1)
+pca_input$apex_intensity <- log10(pca_input$apex_intensity + 1)
+pca_input <- na.omit(pca_input)
+
+# Run PCA
+pca_res <- prcomp(pca_input, center = TRUE, scale. = TRUE)
+
+# Prepare plotting data
+pca_scores <- as.data.frame(pca_res$x)
+pca_scores$lab <- full_peak_report_meta$lab[rownames(pca_input) %in% rownames(pca_scores)]
+pca_scores$lc_type <- full_peak_report_meta$lc_instrument_clean[rownames(pca_input) %in% rownames(pca_scores)]
+pca_scores$mixture <- full_peak_report_meta$mixture[rownames(pca_input) %in% rownames(pca_scores)]
+
+# Variance explained
+var_expl <- summary(pca_res)$importance[2, 1:2] * 100
+
+# Plot 1: Colored by Laboratory
+g1 <- ggplot(pca_scores, aes(x = PC1, y = PC2, color = lab)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "PCA: Colored by Lab",
+       x = sprintf("PC1 (%.1f%%)", var_expl[1]),
+       y = sprintf("PC2 (%.1f%%)", var_expl[2])) +
+  theme_bw()
+
+# Plot 2: Colored by LC Instrument (Hardware Effect)
+g2 <- ggplot(pca_scores, aes(x = PC1, y = PC2, color = lc_type)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "PCA: Colored by LC System",
+       x = sprintf("PC1 (%.1f%%)", var_expl[1]),
+       y = sprintf("PC2 (%.1f%%)", var_expl[2]),
+       color = "LC System") +
+  theme_bw()
+
+# Arrange side by side
+ggarrange(g1, g2, ncol = 2, common.legend = FALSE)
+```
+
+## 6. Conclusions
 
 Peak feature analysis complete. Key metrics calculated:
 
@@ -346,3 +467,9 @@ Peak feature analysis complete. Key metrics calculated:
 - Quantitative robustness (peak area/height CVs)
 
 Results saved to `object/full_peak_report.RData` for downstream analysis.
+
+Based on the analysis above:
+
+- **Lab Variability**: The Kruskal-Wallis test (p = `r format.pval(kw_res$p, digits=3)`) indicates whether there are significant differences in peak widths between labs.
+- **Hardware Influence**: Visualizations in Section 5 suggest that specific LC systems (e.g., `r names(sort(table(full_peak_report_meta$lc_instrument_clean), decreasing=T)[1])`) may contribute to observed variations in peak shapes.
+- **Clustering**: PCA reveals if these features drive systematic clustering, helping identify outliers or method deviations.
