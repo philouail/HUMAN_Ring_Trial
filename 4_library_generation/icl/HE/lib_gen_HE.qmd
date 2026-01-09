@@ -1,0 +1,395 @@
+---
+
+title: "ICL Library Generation - Human Endosome (HE)"
+
+format: html
+
+---
+
+
+
+# Introduction
+
+
+
+This document generates compound annotation libraries from ICL's ring trial data for the Human Endosome (HE) mixture.
+
+
+
+**Purpose:**
+
+- Generate a table for MS1 annotation
+
+- Generate MGF (or MSP) files for MS2 level annotation
+
+
+
+**Data Structure:**
+
+- MS1/MS2 processed data: `1_preprocessing/icl/HE/`
+
+- Manual curation results: `3_annotation_manual/HE/`
+
+- Automatic annotation results: `2_annotation_auto/icl/HE/`
+
+
+
+---
+
+
+
+# Setup
+
+
+
+Load the configuration and define paths:
+
+
+
+```{r setup}
+
+study_group <- "HE"  # set study group
+
+lab <- "icl"         # set lab
+
+
+
+# Derived paths (from project root)
+
+study_path <- file.path("1_preprocessing", lab, study_group)
+
+output_path <- file.path("4_library_generation", lab, study_group)
+
+
+
+if (!dir.exists(study_path)) {
+
+  stop(paste("Study path does not exist:", study_path))
+
+}
+
+
+
+if (!dir.exists(output_path)) {
+
+  dir.create(output_path, recursive = TRUE)
+
+}
+
+```
+
+
+
+---
+
+
+
+# Load Curated Results Table
+
+
+
+```{r load-results}
+
+library(readxl)
+
+library(openxlsx)
+
+
+
+res_table <- read.xlsx(
+
+  file.path(
+
+    "3_annotation_manual",
+
+    study_group,
+
+    "1_manual_curation",
+
+    "fixed_lab_report",
+
+    paste0("fixed_annotation_", lab, ".xlsx")
+
+  )
+
+)
+
+
+
+head(res_table)
+
+```
+
+
+
+---
+
+
+
+# Load MS Data
+
+
+
+```{r load-ms-data}
+
+library(xcms)
+
+library(MsIO)
+
+library(MsExperiment)
+
+
+
+source(file.path("1_preprocessing", "setup.R"))
+
+
+
+peak <- read.csv(
+
+  file.path(
+
+    "2_annotation_auto",
+
+    lab,
+
+    study_group,
+
+    "peak_evidence.csv"
+
+  )
+
+)
+
+table(peak$mixture)
+
+```
+
+
+
+## Load MS1 Data
+
+
+
+```{r load-ms1}
+
+mse <- readMsObject(
+
+  XcmsExperiment(),
+
+  AlabasterParam(path = file.path(study_path, "mse")),
+
+  spectraPath = file.path(study_path, "mzml")
+
+)
+
+
+
+sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
+
+meta <- meta[meta$Mixture %in% sampleData(mse)$mixture, ]
+
+
+
+sampleData(mse)$mixture <- gsub("\\.", "_", sampleData(mse)$mixture)
+
+meta$Mixture <- gsub("\\.", "_", meta$Mixture)
+
+```
+
+
+
+## Load MS2 Data
+
+
+
+```{r load-ms2}
+
+mse2 <- readMsObject(
+
+  XcmsExperiment(),
+
+  AlabasterParam(path = file.path(study_path, "mse2")),
+
+  spectraPath = file.path(study_path, "mzml")
+
+)
+
+
+
+sampleData(mse2)$mixture <- sub(".*_", "", sampleData(mse2)$Sample.Name)
+
+sampleData(mse2)$mixture <- gsub("\\.", "_", sampleData(mse2)$mixture)
+
+
+
+pp <- precursorPurity(spectra(mse2), tolerance = 0.05, ppm = 0)
+
+spectra(mse2)$precursorPurity <- pp
+
+```
+
+
+
+---
+
+
+
+# Generate Library
+
+
+
+## Filter by MS2 Count
+
+
+
+```{r filter-ms2}
+
+cpds <- unlist(strsplit(res_table$chrom_peak_id, split = "\\|"))
+
+fin <- peak[peak$chrom_peak_id %in% cpds, ]
+
+
+
+fin_ms2 <- fin[fin$ms2_count > 0, ]
+
+
+
+cat(sprintf("Compounds with MS2 data: %d\n", nrow(fin_ms2)))
+
+```
+
+
+
+## Extract MS2 Spectra (two injections, Waters data)
+
+
+
+```{r extract-ms2}
+# ICL uses two injections with Waters data; set waters_data = TRUE
+
+test <- automate_matching_ms2(
+  mse2 = mse2,
+  match_res = fin_ms2,
+  waters_data = TRUE # fails, phili needs to fix this.
+)
+```
+
+
+## Prepare Final Library Table
+
+```{r prepare-library}
+base_cols <- c(
+
+  "mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
+
+  "target_ChEBI.name", "target_ChEBI", "target_InChIKey", "target_formula",
+
+  "adduct", "polarity", "ms2_true_count", "RTI", "mixture"
+
+)
+
+fin <- fin[, base_cols]
+
+fin$ms2_true_count <- as.logical(fin$ms2_true_count)
+
+standard_cols <- c(
+
+  "mz", "rt", "mzmin", "mzmax", "rtmin", "rtmax",
+
+  "compound_name", "ChEBI", "InChIKey", "formula", "adduct",
+
+  "polarity", "matched_to_library", "RTI", "mixture"
+
+)
+
+colnames(fin) <- standard_cols
+head(fin)
+```
+
+
+
+## Export Library CSV
+
+```{r export-csv}
+csv_file <- file.path(output_path, paste0("ring_trial_library_", study_group, ".csv"))
+
+write.csv(fin, csv_file, row.names = FALSE)
+
+cat(sprintf("Library table exported to: %s\n", csv_file))
+```
+
+---
+
+# Exporting MS2 Data
+
+```{r prepare-ms2-export}
+
+peak_cols <- c("compound_name", "ChEBI", "InChIKey", "adduct",
+
+              "matched_to_library", "RTI", "mixture", "formula")
+
+peakdata <- fin[test$chrom_peak_id, peak_cols]
+
+test <- cbind2(test, peakdata)
+
+test <- dropNaSpectraVariables(test)
+
+cat(sprintf("Prepared %d spectra for export\n", length(test)))
+
+```
+
+
+
+## MGF Export
+
+
+
+```{r export-mgf}
+
+library(MsBackendMgf)
+
+mgf_file <- file.path(output_path, paste0("std_spectra_", study_group, ".mgf"))
+
+export(test@backend, MsBackendMgf(), file = mgf_file)
+
+cat(sprintf("MGF exported to: %s\n", mgf_file))
+
+```
+
+
+
+# Optional: Single-injection method (keep commented for ICL)
+
+
+
+```{r chrompeakspectra, eval=FALSE}
+
+# test <- chromPeakSpectra(
+
+#   mse,
+
+#   msLevel = 2L,
+
+#   peaks = cpds,
+
+#   expandRt = 5,
+
+#   expandMz = 0.005
+
+# )
+
+```
+
+
+
+---
+
+
+
+# Session Information
+
+
+
+```{r session-info}
+sessionInfo()
+```

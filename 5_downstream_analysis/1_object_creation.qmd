@@ -20,7 +20,8 @@ library(xcms)
 library(MsIO)
 library(MsExperiment)
 
-source("rt_analysis_function.R")
+base_path <- file.path("5_downstream_analysis")
+source(file.path(base_path, "rt_analysis_function.R"))
 ```
 
 ```{r cores-cluster}
@@ -33,45 +34,45 @@ bpparam <- MulticoreParam(workers = parallel::detectCores() - 1)
 ## Load Full Data
 
 ```{r load-full-data}
-if (!file.exists("object/sp_full.RData")) {
+if (!file.exists(file.path(base_path, "object/sp_full.RData"))) {
   sp_afekta <- load_data(lab = "afekta", study_group = "HE")
   sp_hmgu <- load_data(lab = "hmgu", study_group = "HE")
   sp_icl <- load_data(lab = "icl", study_group = "HE")
   sp_cembio <- load_data(lab = "cembio", study_group = "HE")
 
   sp_full <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-  save(sp_full, file = "object/sp_full.RData")
+  save(sp_full, file = file.path(base_path, "object/sp_full.RData"))
   rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
 } else {
-  load("object/sp_full.RData")
+  load(file.path(base_path, "object/sp_full.RData"))
 }
 ```
 
 ## Create Base Peak Chromatogram (BPC) - Full Data
 
 ```{r load-bpc-full}
-if(!file.exists("object/bpc_full.RData")) {
+if(!file.exists(file.path(base_path, "object/bpc_full.RData"))) {
   bpc_full <- Chromatograms(sp_full, summarize.method = "max",
                        factorize.by= "dataOrigin",
                        spectraVariables = c("mixture", "lab"))
   bpc_full <- setBackend(bpc_full, ChromBackendMemory())
-  save(file = "object/bpc_full.RData", bpc_full)
+  save(file = file.path(base_path, "object/bpc_full.RData"), bpc_full)
 } else {
-  load("object/bpc_full.RData")
+  load(file.path(base_path, "object/bpc_full.RData"))
 }
 ```
 
 ## Create Total Ion Current (TIC) - Full Data
 
 ```{r load-tic-full}
-if (!file.exists("object/tic_full.RData")) {
+if (!file.exists(file.path(base_path, "object/tic_full.RData"))) {
   tic_full <- Chromatograms(sp_full, summarize.method = "sum",
                        factorize.by= "dataOrigin",
                        spectraVariables = c("mixture", "lab"))
   tic_full <- setBackend(tic_full, ChromBackendMemory())
-  save(file = "object/tic_full.RData", tic_full)
+  save(file = file.path(base_path, "object/tic_full.RData"), tic_full)
 } else {
-  load("object/tic_full.RData")
+  load(file.path(base_path, "object/tic_full.RData"))
 }
 ```
 
@@ -80,66 +81,67 @@ if (!file.exists("object/tic_full.RData")) {
 ## Load Detected Signal Data
 
 ```{r load-detect}
-if (!file.exists("object/sp_full_detect.RData")) {
+if (!file.exists(file.path(base_path, "object/sp_full_detect.RData"))) {
   bpparam <- MulticoreParam(8) # for the cluster
   sp_afekta <- detect_signal(lab = "afekta", study_group = "HE",
                              annotated = FALSE, bpparam = bpparam)
-  save(sp_afekta, file = "object/sp_afekta.RData")
+  save(sp_afekta, file = file.path(base_path, "object/sp_afekta.RData"))
   rm(sp_afekta)
 
   sp_hmgu <- detect_signal(lab = "hmgu", study_group = "HE",
                            annotated = FALSE, bpparam = bpparam)
-  save(sp_hmgu, file = "object/sp_hmgu.RData")
+  save(sp_hmgu, file = file.path(base_path, "object/sp_hmgu.RData"))
   rm(sp_hmgu)
 
   sp_icl <- detect_signal(lab = "icl", study_group = "HE",
                           annotated = FALSE, bpparam = bpparam)
-  save(sp_icl, file = "object/sp_icl.RData")
+  save(sp_icl, file = file.path(base_path, "object/sp_icl.RData"))
   rm(sp_icl)
 
   sp_cembio <- detect_signal(lab = "cembio", study_group = "HE",
                              annotated = FALSE, bpparam = bpparam)
-  save(sp_cembio, file = "object/sp_cembio.RData")
+  save(sp_cembio, file = file.path(base_path, "object/sp_cembio.RData"))
 
-  load("object/sp_hmgu.RData")
-  load("object/sp_afekta.RData")
-  load("object/sp_icl.RData")
+  load(file.path(base_path, "object/sp_hmgu.RData"))
+  load(file.path(base_path, "object/sp_afekta.RData"))
+  load(file.path(base_path, "object/sp_icl.RData"))
 
   sp_full_detect <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-  save(sp_full_detect, file = "object/sp_full_detect.RData")
+  save(sp_full_detect, file = file.path(base_path, "object/sp_full_detect.RData"))
   rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
 } else {
-  load("object/sp_full_detect.RData")
+  load(file.path(base_path, "object/sp_full_detect.RData"))
 }
 ```
 
 ## Create Base Peak Chromatogram (BPC) - Detected Signal
 
 ```{r load-bpc-detect}
-if (!file.exists("object/bpc_detect.RData")) {
+if (!file.exists(file.path(base_path, "object/bpc_detect.RData"))) {
   bpc_detect <- Chromatograms(sp_full_detect, summarize.method = "max",
                        factorize.by= "dataOrigin",
                        spectraVariables = c("lab", "mixture"))
   bpc_detect <- setBackend(bpc_detect, ChromBackendMemory())
-  save(file = "object/bpc_detect.RData", bpc_detect)
+  save(file = file.path(base_path, "object/bpc_detect.RData"), bpc_detect)
 } else {
-  load("object/bpc_detect.RData")
+  load(file.path(base_path, "object/bpc_detect.RData"))
 }
 ```
 
 ## Create Total Ion Current (TIC) - Detected Signal
 
 ```{r load-tic-detect}
-if (!file.exists("object/tic_detect.RData")) {
+if (!file.exists(file.path(base_path, "object/tic_detect.RData"))) {
   tic_detect <- Chromatograms(sp_full_detect, summarize.method = "sum",
                        factorize.by= "dataOrigin",
                        spectraVariables = c("mixture", "lab"))
   tic_detect <- setBackend(tic_detect, ChromBackendMemory())
-  save(file = "object/tic_detect.RData", tic_detect)
+  save(file = file.path(base_path, "object/tic_detect.RData"), tic_detect)
 } else {
-  load("object/tic_detect.RData")
+  load(file.path(base_path, "object/tic_detect.RData"))
 }
 ```
+
 
 # Annotated Signal Objects
 
@@ -160,7 +162,7 @@ res_cembio <- read.csv(file.path("..", "4_library_generation", "cembio",
 ## Load Annotated Signal Data
 
 ```{r an_signal_sp}
-if (!file.exists("object/sp_full_ann.RData")) {
+if (!file.exists(file.path(base_path, "object/sp_full_ann.RData"))) {
   bpparam <- MulticoreParam(8)
   sp_afekta <- detect_signal(lab = "afekta", study_group = study_group,
                              annotated = TRUE, bpparam = bpparam)
@@ -171,38 +173,38 @@ if (!file.exists("object/sp_full_ann.RData")) {
   sp_cembio <- detect_signal(lab = "cembio", study_group = study_group,
                              annotated = TRUE, bpparam = bpparam)
   sp_full_ann <- c(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
-  save(sp_full_ann, file = "object/sp_full_ann.RData")
+  save(sp_full_ann, file = file.path(base_path, "object/sp_full_ann.RData"))
   rm(sp_afekta, sp_hmgu, sp_icl, sp_cembio)
 } else {
-  load("object/sp_full_ann.RData")
+  load(file.path(base_path, "object/sp_full_ann.RData"))
 }
 ```
 
 ## Create Base Peak Chromatogram (BPC) - Annotated Signal
 
 ```{r load-bpc-ann}
-if (!file.exists("object/bpc_ann.RData")) {
+if (!file.exists(file.path(base_path, "object/bpc_ann.RData"))) {
   bpc_ann <- Chromatograms(sp_full_ann, summarize.method = "max",
                        factorize.by= "dataOrigin",
                        spectraVariables = c("mixture", "lab"))
   bpc_ann <- setBackend(bpc_ann, ChromBackendMemory())
-  save(file = "object/bpc_ann.RData", bpc_ann)
+  save(file = file.path(base_path, "object/bpc_ann.RData"), bpc_ann)
 } else {
-  load("object/bpc_ann.RData")
+  load(file.path(base_path, "object/bpc_ann.RData"))
 }
 ```
 
 ## Create Total Ion Current (TIC) - Annotated Signal
 
 ```{r load-tic-ann}
-if (!file.exists("object/tic_ann.RData")) {
+if (!file.exists(file.path(base_path, "object/tic_ann.RData"))) {
   tic_ann <- Chromatograms(sp_full_ann, summarize.method = "sum",
                        factorize.by= "dataOrigin",
                        spectraVariables = c("mixture", "lab"))
   tic_ann <- setBackend(tic_ann, ChromBackendMemory())
-  save(file = "object/tic_ann.RData", tic_ann)
+  save(file = file.path(base_path, "object/tic_ann.RData"), tic_ann)
 } else {
-  load("object/tic_ann.RData")
+  load(file.path(base_path, "object/tic_ann.RData"))
 }
 ```
 
@@ -211,19 +213,27 @@ if (!file.exists("object/tic_ann.RData")) {
 ## Load TIC Full Spectra
 
 ```{r load-tic-full-spectra}
-if (!file.exists("object/tic_full_spectra.RData")) {
-  load("object/sp_full.RData")
+if (!file.exists(file.path(base_path, "object/tic_full_spectra.RData"))) {
+  load(file.path(base_path, "object/sp_full.RData"))
   sp_full <- filterEmptySpectra(sp_full)
   tic_full <- Chromatograms(sp_full, summarize.method = "sum",
                        factorize.by= "dataOrigin",
                        spectraVariables = c("mixture", "lab"))
-  save(tic_full, file = "object/tic_full_spectra.RData")
+  save(tic_full, file = file.path(base_path, "object/tic_full_spectra.RData"))
 } else {
-  load("object/tic_full_spectra.RData")
+  load(file.path(base_path, "object/tic_full_spectra.RData"))
 }
 ```
 
+
 ## Extract EICs for Detected Peaks
+
+```{r}
+#' where can i extract the chrompeaks info
+#' either from the mse object
+```
+
+## Extract EICs for annotated Peaks
 
 ```{r peak-table}
 res_afekta$lab <- "afekta"
@@ -243,15 +253,18 @@ peak_table$polarity <- ifelse(peak_table$polarity == "pos", 1, 0)
 ```
 
 ```{r load-eics-detected, warning = FALSE}
-if (!file.exists("object/eics_detected.RData")) {
-  eics <- chromExtract(tic_full, peak.table = peak_table,
-                       by = c("polarity", "lab", "mixture"))
+if (!file.exists(file.path(base_path, "object/eics_ann.RData"))) {
+  eics <- chromExtract(
+    tic_full,
+    peak.table = peak_table,
+    by = c("polarity", "lab", "mixture")
+  )
   eics <- setBackend(eics, ChromBackendMemory())
   eics <- imputePeaksData(eics, method = "linear")
   eics <- applyProcessing(eics)
-  save(eics, file = "object/eics_detected.RData")
+  save(eics, file = file.path(base_path, "object/eics_ann.RData"))
 } else {
-  load("object/eics_detected.RData")
+  load(file.path(base_path, "object/eics_ann.RData"))
 }
 ```
 
@@ -271,3 +284,4 @@ All objects have been created and saved to the `object/` directory:
 - `tic_ann.RData`: Total ion chromatograms (annotated signal)
 - `tic_full_spectra.RData`: TIC from full spectra (for peak analysis)
 - `eics_detected.RData`: Extracted ion chromatograms for detected peaks
+- `eics_ann.RData`: Extracted ion chromatograms for annotated peaks

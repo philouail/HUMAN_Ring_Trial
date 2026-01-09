@@ -117,6 +117,7 @@ process_lab_evidence <- function(lab_name) {
     res$ms2_true_count <- sum(sub$ms2_true_count, na.rm = TRUE)
     res$number_of_peaks <- nrow(sub)
     res$RTI <- paste(sub$RTI, collapse = "|")
+    res$polarity <- paste(unique(sub$polarity), collapse = "|")
 
     return(res)
   })
