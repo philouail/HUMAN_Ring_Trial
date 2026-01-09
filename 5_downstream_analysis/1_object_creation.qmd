@@ -149,13 +149,13 @@ if (!file.exists(file.path(base_path, "object/tic_detect.RData"))) {
 
 ```{r load-annotations}
 study_group <- "HE"
-res_afekta <- read.csv(file.path("..", "4_library_generation", "afekta",
+res_afekta <- read.csv(file.path("4_library_generation", "afekta",
                                  study_group, "ring_trial_library_HE.csv"))
-res_hmgu <- read.csv(file.path("..", "4_library_generation", "hmgu",
+res_hmgu <- read.csv(file.path("4_library_generation", "hmgu",
                                study_group, "ring_trial_library_HE.csv"))
-res_icl <- read.csv(file.path("..", "4_library_generation", "icl",
+res_icl <- read.csv(file.path("4_library_generation", "icl",
                                study_group, "ring_trial_library_HE.csv"))
-res_cembio <- read.csv(file.path("..", "4_library_generation", "cembio",
+res_cembio <- read.csv(file.path("4_library_generation", "cembio",
                                  study_group, "ring_trial_library_HE.csv"))
 ```
 
@@ -228,14 +228,46 @@ if (!file.exists(file.path(base_path, "object/tic_full_spectra.RData"))) {
 
 ## Extract EICs for Detected Peaks
 
-```{r}
+```{r peak-table-detected}
 #' where can i extract the chrompeaks info
-#' either from the mse object
+cpd_afekta <- read.csv(file.path(base_path, "detected_peaks_afekta_HE.csv"))
+cpd_hmgu <- read.csv(file.path(base_path,"detected_peaks_hmgu_HE.csv"))
+cpd_icl <- read.csv(file.path(base_path,  "detected_peaks_icl_HE.csv"))
+cpd_cembio <- read.csv(file.path(base_path, "detected_peaks_cembio_HE.csv"))
+cpd_afekta$lab <- "afekta"
+cpd_hmgu$lab <- "hmgu"
+cpd_icl$lab <- "icl"
+cpd_cembio$lab <- "cembio"
+
+peak_table_detect <- rbind(cpd_hmgu, cpd_afekta, cpd_icl, cpd_cembio)
+colnames(peak_table_detect)[1] <- "chrom_peak_id"
+colnames(peak_table_detect)[4:7] <- c("mzMin", "mzMax", "rtMin", "rtMax")
+peak_table_detect$mzMin <- peak_table_detect$mzMin - 0.003
+peak_table_detect$mzMax <- peak_table_detect$mzMax + 0.003
+peak_table_detect$rtMin <- peak_table_detect$rtMin - 3
+peak_table_detect$rtMax <- peak_table_detect$rtMax + 3
+peak_table_detect$polarity <- ifelse(peak_table_detect$polarity == "pos", 1, 0)
+```
+
+```{r load-eics-detected}
+if (!file.exists(file.path(base_path, "object/eics_detected.RData"))) {
+  eics_detected <- chromExtract(
+    tic_full,
+    peak.table = peak_table_detect,
+    by = c("polarity", "lab", "mixture")
+  )
+  eics_detected <- setBackend(eics_detected, ChromBackendMemory())
+  eics_detected <- imputePeaksData(eics_detected, method = "linear")
+  eics_detected <- applyProcessing(eics_detected)
+  save(eics_detected, file = file.path(base_path, "object/eics_detected.RData"))
+} else {
+  load(file.path(base_path, "object/eics_detected.RData"))
+}
 ```
 
 ## Extract EICs for annotated Peaks
 
-```{r peak-table}
+```{r peak-table-annotated}
 res_afekta$lab <- "afekta"
 res_hmgu$lab <- "hmgu"
 res_icl$lab <- "icl"
@@ -252,7 +284,7 @@ peak_table$rtMax <- peak_table$rtMax + 3
 peak_table$polarity <- ifelse(peak_table$polarity == "pos", 1, 0)
 ```
 
-```{r load-eics-detected, warning = FALSE}
+```{r load-eics-ann, warning = FALSE}
 if (!file.exists(file.path(base_path, "object/eics_ann.RData"))) {
   eics <- chromExtract(
     tic_full,

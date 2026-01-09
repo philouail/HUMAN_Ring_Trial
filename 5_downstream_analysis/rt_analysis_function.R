@@ -17,11 +17,11 @@ compute_bin_count <- function(rt, n_bins = 30) {
 #' @return spectra object
 load_data <- function(lab, study_group, return = "sp") {
   ## Load MS1 level data.
-  dr <- file.path("..", lab)
+  dr <- file.path("1_preprocessing", lab, study_group)
   mse <- readMsObject(
     XcmsExperiment(),
-    AlabasterParam(path = file.path(dr, "results", study_group, "mse")),
-    spectraPath = file.path(dr, "HE_mzml")
+    AlabasterParam(path = file.path(dr, "mse")),
+    spectraPath = file.path(dr, "mzml")
   )
 
   sampleData(mse)$mixture <- sub(".*_", "", sampleData(mse)$Sample.Name)
@@ -55,7 +55,6 @@ detect_signal <- function(
 ) {
   ## lab should be character of length 1.
   a <- load_data(lab = lab, study_group = study_group, return = "mse")
-  dr <- file.path("..", lab)
   if (annotated) {
     res <- read.csv(file.path(
       "4_library_generation",
@@ -69,13 +68,17 @@ detect_signal <- function(
     ]
   } else {
     cpks <- chromPeaks(a)[, c("rtmin", "rtmax", "mzmin", "mzmax", "sample")]
+    ## need to map polarity information here, to the sampleData(a)$polarity row index
+    cpks <- as.data.frame(cpks)
+    cpks$polarity <- sampleData(a)$polarity[
+      match(cpks$sample, seq_len(nrow(sampleData(a))))
+    ]
     write.csv(
-      as.data.frame(cpks),
+      cpks,
       file = file.path(
-        dr,
-        "results",
-        study_group,
-        "detected_chrom_peaks.csv"
+        "5_downstream_analysis",
+        "object",
+        paste0("detected_peaks_", lab, "_", study_group, ".csv")
       ),
       row.names = FALSE
     )
