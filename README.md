@@ -18,6 +18,13 @@ across the participating laboratories (Afekta, Cembio, HMGU, ICL).
 3. **Samples** — mixtures from the MetaSci metabolite standard library, so the
    ground-truth composition of each mixture is known.
 
+> **This branch is the semi-automated (expert-curated) track.** Labs manually
+> review the automatic evidence, SIRIUS scores the human-curated peaks, and the
+> downstream analysis quantifies cross-lab reproducibility of the confirmed
+> panel. The **fully automatic all-MS2 SIRIUS annotation** and the
+> **spectral-library building** it feeds live on the `main` branch, which carries
+> its own README.
+
 -----
 
 ## 📂 Project Structure & Workflow
